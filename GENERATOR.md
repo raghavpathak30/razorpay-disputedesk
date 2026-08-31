@@ -492,6 +492,19 @@ latents) should be expected to land measurably below this ceiling. That gap is
 itself worth reporting: it's the honest answer to "how much of the true signal did
 the model actually recover."
 
+**Revision note (Phase 2, measured): the 0.30–0.36 guess above was low.** Per
+DECISIONS.md's 2026-08-31 "Phase 2 model quality, measured" entry
+(`python -m eval.run_harness --n-seeds 20 --n-rows 15000`, `eval/oracle.py`'s
+closed-form sweep against the debug `p` column, median and IQR across 20
+seeds): the real oracle PR-AUC on generated data is **0.4572** (IQR
+0.4527–0.4585) against a prevalence baseline of 0.2377 (IQR 0.2331–0.2422) —
+a real, larger lift than guessed, not the +0.05 to +0.11 estimated above. The
+trained LightGBM model lands measurably below it, at PR-AUC 0.3522 (IQR
+0.3448–0.3696), which is the honest gap this section predicted a real model
+would show. The guessed value is left above, unedited, per CLAUDE.md's rule
+against silently changing a recorded number; this note is the correction, not
+a rewrite.
+
 ---
 
 ## 6. Confounders
@@ -681,7 +694,10 @@ of it is implemented:
 8. Authentication-strength improvement drift: small, unspecified magnitude (§7)
 9. Oracle ceiling guess: PR-AUC roughly **0.30–0.36** against a **0.25 prevalence
    baseline** (§5) — **revised down from 0.75–0.88**, a direct consequence of
-   item 2 above
+   item 2 above. **Resolved (Phase 2, measured):** real oracle PR-AUC is
+   **0.4572** (IQR 0.4527–0.4585, 20 seeds) against a measured prevalence of
+   0.2377 (IQR 0.2331–0.2422) — see the Phase 2 revision note in §5 and
+   DECISIONS.md's 2026-08-31 "Phase 2 model quality, measured" entry.
 10. `amount` distribution shape and parameters, now conditioned on `true_fraud`
     (§3, §8) — lognormal assumed; **session 2: `μ` gap solved analytically for
     `AUC(amount, true_fraud) = 0.60`** (`μ_true_fraud = 8.922458`,

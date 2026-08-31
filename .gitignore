@@ -21,6 +21,7 @@ htmlcov/
 *.sqlite3
 
 data/generated/
+data/eval/
 
 .DS_Store
 .idea/

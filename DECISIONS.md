@@ -93,3 +93,88 @@ corrected guess, not a defect.
 **Result:** ... TF-IDF + logistic regression on customer_communication_log
 recovers true_fraud at AUC 0.6371 (5-fold CV) — real signal, not a leak, and
 the baseline for Phase 3's LLM extraction to beat.
+
+## 2026-08-31 — Phase 2 model quality, measured
+
+**Result:** LightGBM (`disputedesk/model`, `ModelConfig` defaults) on
+`disputedesk/features`' feature set, temporal holdout only, median and IQR
+(25th/75th percentile) across 20 seeds (0–19), n_rows=15000 per seed:
+- model PR-AUC (average precision): **0.3522** (IQR 0.3448–0.3696)
+- prevalence baseline: **0.2377** (IQR 0.2331–0.2422)
+- oracle Bayes ceiling, closed-form sweep (GENERATOR.md §5): **0.4572** (IQR
+  0.4527–0.4585)
+- precision / recall, at threshold = train-split label prevalence (median
+  0.2543): **0.3537** / **0.6954**
+- calibration error (expected calibration error, 10 equal-width bins):
+  **0.0270** (IQR 0.0208–0.0314) — well calibrated
+- permutation importance (holdout, average-precision scoring) ranks
+  `ip_geo_billing_distance_km` and `prior_order_count` well above every other
+  feature; LightGBM's gain importance, by contrast, ranks the pure-noise
+  `checkout_hour_of_day` control 5th on a single-seed check (seed 42) — above
+  seven real features — confirming GENERATOR.md/PHASES.md's warning against
+  ever reporting gain importance as a headline figure.
+
+**How:** `python -m eval.run_harness --n-seeds 20 --n-rows 15000`. Writes
+`data/eval/per_seed_do_not_report_individually.csv` (raw per-seed rows, not a
+headline number on their own) and `data/eval/headline_median_iqr.csv` (the
+median/IQR table above).
+
+**Caveats:** Precision/recall use a placeholder threshold (train-split label
+prevalence), not a real policy decision — the policy engine (SPEC.md §4) does
+not exist yet (Phase 3). This is not the operating point the eventual system
+will use, only a documented stand-in so Phase 2 has *some* precision/recall
+to report, as PHASES.md's gate requires. Cost-weighted rupee metrics and the
+two policy baselines are explicitly out of scope for this measurement
+(Phase 3 needs `representment_cost`, not decided yet).
+
+This corrects GENERATOR.md §5's guessed oracle PR-AUC of 0.30–0.36 (open
+parameter 9): the real ceiling on generated data is measurably higher, at
+~0.46. The *direction* GENERATOR.md predicted held (model clears prevalence
+by a wide margin; oracle exceeds the trained model) — only the guessed
+magnitude of the ceiling was low, which GENERATOR.md's own §5 text
+anticipated as a live possibility ("a different value is a corrected guess,
+not a defect").
+
+**Status:** CONFIRMED-RAN
+
+## 2026-08-31 — Oracle closed-form vs. single-draw AP, reconciled
+
+A Phase 1 sanity check measured `average_precision_score(y_true, p_true)` on
+the seed-42 holdout at 0.4335. The Phase 2 entry above reports the
+closed-form `oracle_pr_auc(p_true)` at median 0.4572 (IQR 0.4527–0.4585
+across 20 seeds) — 0.4335 falls outside that IQR, which needed explaining
+before either number could be trusted.
+
+**Result:** on the seed-42, n=15000 holdout (n=3545 rows) used by both
+checks: closed-form `oracle_pr_auc` = **0.4556**. GENERATOR.md §5's own
+specified cross-check — draw many replicate `Bernoulli(p)` label samples from
+the same `p` vector and confirm the closed form matches their mean, not the
+rough two-point idealization a prior version of this project's tests used as
+a stand-in — was implemented and run: mean of 500 replicate
+`average_precision_score` draws = **0.4569** (std 0.0173, standard error of
+the mean 0.0008). The closed form and the replicate mean agree within 1.7
+standard errors — statistically indistinguishable. Phase 1's single value,
+0.4335, sits 1.35 standard deviations below that mean — ordinary sampling
+variance for a single realized draw at this holdout size, not a sign the two
+formulas measure different things.
+
+**How:** `pytest tests/test_eval_oracle_replicate_check.py -v`
+(`test_closed_form_equals_the_mean_of_replicate_label_draws` and
+`test_a_single_realized_draw_is_within_a_few_standard_deviations_of_the_mean`),
+implementing the replicate-sample check GENERATOR.md §5 specifies but a
+prior version of `tests/test_eval_oracle.py` had substituted with the
+document's rough two-point illustration instead — agreement with that
+illustration was not a valid stand-in for this check, since it was the same
+reasoning that produced the 0.30–0.36 ceiling guess the measurement above
+overturned.
+
+**Caveats:** This settles that the closed form is the correct thing to
+report (it is the expectation; a single realized draw is one noisy sample of
+it, with std ≈0.017 at this holdout size) — it does not mean any individual
+future single-seed check should be expected to land close to the closed
+form. Precision/recall/PR-AUC checks that use one realized draw (e.g. a
+quick sanity check on one seed) should expect ~1–2 point swings from
+sampling noise alone and should not be treated as headline numbers
+(CLAUDE.md invariant 3) for exactly this reason.
+
+**Status:** CONFIRMED-RAN
