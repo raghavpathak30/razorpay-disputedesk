@@ -33,6 +33,42 @@ LABEL_COLUMN = "won_if_contested"
 
 
 @dataclass(frozen=True)
+class SeedRun:
+    """One seed's generate -> temporal split -> train -> predict cycle,
+    holdout-only. Shared by `run_seed` (model/calibration metrics) and
+    `eval.business_metrics` (rupee metrics) so both read off the same
+    predictions instead of retraining separately per seed.
+    """
+
+    train_df: pd.DataFrame
+    test_df: pd.DataFrame
+    debug_df: pd.DataFrame
+    predicted_p: np.ndarray
+
+
+def run_seed_pipeline(
+    seed: int,
+    n_rows: int,
+    generator_config: GeneratorConfig,
+    model_config: ModelConfig,
+) -> SeedRun:
+    """Generate, split temporally, train on the training split only, and
+    predict `P(win)` on the held-out test split.
+    """
+    features_df, debug_df = generate_dataset(n_rows, seed, generator_config)
+    train_df, test_df, _boundary = temporal_split(features_df, generator_config)
+
+    X_train = build_feature_matrix(train_df)
+    y_train = train_df[LABEL_COLUMN]
+    X_test = build_feature_matrix(test_df)
+
+    model = train(X_train, y_train, model_config)
+    predicted_p = predict_proba(model, X_test)
+
+    return SeedRun(train_df=train_df, test_df=test_df, debug_df=debug_df, predicted_p=predicted_p)
+
+
+@dataclass(frozen=True)
 class SeedResult:
     seed: int
     threshold: float
@@ -61,21 +97,15 @@ def run_seed(
     temporal test split only - nothing here ever touches `train_df` for
     scoring.
     """
-    features_df, debug_df = generate_dataset(n_rows, seed, generator_config)
-    train_df, test_df, _boundary = temporal_split(features_df, generator_config)
-
-    X_train = build_feature_matrix(train_df)
+    run = run_seed_pipeline(seed, n_rows, generator_config, model_config)
+    train_df, test_df, predicted_p = run.train_df, run.test_df, run.predicted_p
     y_train = train_df[LABEL_COLUMN]
-    X_test = build_feature_matrix(test_df)
     y_test = test_df[LABEL_COLUMN]
-
-    model = train(X_train, y_train, model_config)
-    predicted_p = predict_proba(model, X_test)
 
     threshold = float(y_train.mean())
     predicted_contest = predicted_p >= threshold
 
-    test_debug_p = debug_df.loc[test_df.index, "p"].to_numpy()
+    test_debug_p = run.debug_df.loc[test_df.index, "p"].to_numpy()
 
     return SeedResult(
         seed=seed,

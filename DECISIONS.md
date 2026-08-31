@@ -178,3 +178,131 @@ sampling noise alone and should not be treated as headline numbers
 (CLAUDE.md invariant 3) for exactly this reason.
 
 **Status:** CONFIRMED-RAN
+
+## 2026-08-31 — representment_cost_inr sensitivity sweep, measured
+
+A sensitivity analysis reported *alongside* the configured
+`representment_cost_inr=400.0` (`disputedesk/policy/config.py`), not a
+retune - the configured value was not changed to produce this result, and
+this entry does not propose changing it.
+
+**Result:** `low_confidence_band=(0.45, 0.55)`, seeds 0–19, n_rows=15000 per
+seed held fixed; `representment_cost_inr` swept from 0 to 10,000. Escalated
+disputes scored under `escalate_mode="naive_contest"` throughout (the fair
+mode against baseline A - see the entry above). Policy vs. baseline A
+(contest everything), rupees recovered per 1,000 disputes, median across 20
+seeds:
+
+| cost | policy | baseline A | policy − baseline A |
+|---|---|---|---|
+| 0 | 2,101,093 | 2,101,093 | 0 |
+| 100 | 2,000,929 | 2,001,093 | −163 |
+| 250 | 1,850,879 | 1,851,093 | −214 |
+| 300 | 1,805,301 | 1,801,093 | +4,209 |
+| **400 (configured)** | **1,714,015** | **1,701,093** | **+12,923** |
+| 600 | 1,545,496 | 1,501,093 | +44,403 |
+| 900 | 1,326,262 | 1,201,093 | +125,170 |
+| 1,000 | 1,253,163 | 1,101,093 | +152,071 |
+| 2,000 | 770,639 | 101,093 | +669,547 |
+| 2,500 | 614,829 | −398,908 | +1,013,737 |
+| 6,000 | −4,978 | −3,898,908 | +3,893,929 |
+
+**Where the advantage disappears:** for `representment_cost_inr` roughly in
+[0, 290], the median advantage is small (magnitude under ~2,200 out of a
+~2,000,000 base, i.e. well under 0.1%) and flips sign between adjacent swept
+values (−219 at 50, −163 at 100, +117 at 120, −145 at 140, +536 at 150, ...,
+−214 at 250, +4,209 at 300) - individual near-threshold disputes flipping
+which side of `decide()`'s cutoff they land on as cost changes in small
+steps, not a real, seed-robust difference. In this band the policy is
+**statistically indistinguishable from baseline A**, not reliably ahead of
+it. Below cost≈120 the two are effectively identical by construction: near
+cost=0, `expected_value = p_win * amount - cost ≈ p_win * amount`, which is
+positive for nearly every dispute, so the policy contests almost everything
+baseline A already contests everything.
+
+**Where it becomes substantial:** the advantage grows monotonically and
+robustly for cost ≥ ~300, crossing 10% of baseline A's own recovered total
+between cost=800 (6.6%) and cost=900 (10.4%) - roughly **2.25× the
+configured value**. By cost≈2,000 baseline A's own recovered rate has fallen
+to near zero while the policy still recovers 770,639; by cost≈2,500 and
+above, baseline A goes net *negative* (contesting everything is actively
+destroying value) while the policy stays solidly positive - the clearest
+qualitative divergence in the sweep, driven by the policy's selectivity
+(declining to contest disputes whose `P(win) * amount` no longer clears the
+now-larger cost) versus baseline A paying the fee on every dispute
+regardless of merit.
+
+**At the configured value (400):** the advantage (+12,923, ≈0.75% of
+baseline A) sits just above the noisy crossover band, not yet in the
+"substantial" regime - consistent with the 2026-08-31 "Phase 3 cost-weighted
+business metrics" entry's `naive_contest` result above.
+
+**How:** `python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000
+--costs 0 50 100 110 120 130 140 150 160 170 180 190 200 250 300 400 500 600
+700 800 900 1000 1200 1500 2000 2500 3000 4000 5000 6000 8000 10000`. Writes
+`data/eval/cost_sensitivity_per_seed_do_not_report_individually.csv` and
+`data/eval/cost_sensitivity_median_iqr.csv`. `eval/cost_sensitivity.py`
+reuses each seed's `eval.harness.run_seed_pipeline` predictions once (`P(win)`
+does not depend on `representment_cost_inr`), so all 33 swept costs come
+from the same 20 trained models, not 33×20 retrains.
+
+**Caveats:** the crossover band's exact edges (which specific cost values
+flip sign) are themselves noise and should not be over-read - what's robust
+is the qualitative shape (near-parity below ~300, growing and monotonic
+above it), not any single swept value's sign. This sweep used the model
+trained under the configured `low_confidence_band=(0.45, 0.55)`; it does not
+sweep the band itself, which was explicitly out of scope for this analysis.
+
+**Status:** CONFIRMED-RAN
+
+## 2026-08-31 — Phase 3 cost-weighted business metrics, measured
+
+**Result:** `PolicyConfig` defaults (`representment_cost_inr=400.0`,
+`low_confidence_band=(0.45, 0.55)` — unchanged from their original values),
+temporal holdout only, median and IQR across 20 seeds (0–19), n_rows=15000
+per seed (median n_test=3609.5):
+
+Rupees recovered per 1,000 disputes, by what an escalated dispute is
+credited (`eval.business_metrics.EscalateMode` — see that module's
+docstring):
+
+| escalate_mode | policy (median) | beats baseline A (contest everything, median 1,701,092) | beats baseline B (accept everything, 0) |
+|---|---|---|---|
+| `zero` (no outcome claimed) | 1,559,504 | **NO** | YES |
+| `oracle` (human always right) | 1,727,152 | YES | YES |
+| `naive_contest` (human contests every escalated case, same as baseline A already assumes for those rows) | 1,714,015 | **YES** | YES |
+
+`escalated_amount_share_of_holdout` (median): **0.0433** — 4.33% of total
+holdout rupees sit in the ~199.5-of-3609.5 (≈5.5% by count) escalated
+disputes; the escalated share of *count* and of *money* are close, not
+wildly disproportionate, at this `low_confidence_band` width.
+
+**How:** `python -m eval.run_business_harness --n-seeds 20 --n-rows 15000`.
+Writes `data/eval/business_per_seed_do_not_report_individually.csv` and
+`data/eval/business_headline_median_iqr.csv`.
+
+**Caveats — this correction matters more than the numbers themselves:** an
+earlier run of this same command only reported the `zero`-mode number and
+concluded "the policy loses to contest-everything." That conclusion was
+wrong, or at least not established, and was caught before being recorded
+here: crediting an escalated dispute 0 rupees assumes the human who reviews
+it takes no action and recovers nothing, which is not what "escalate to a
+human" means (SPEC.md §4's own framing is that the band exists so the system
+has an honest "I don't know" path, not a claim that escalated disputes are
+worthless) — it structurally penalizes the policy for having an abstention
+path that contest-everything doesn't have. `naive_contest` is the fair
+comparison against baseline A specifically, because it scores the escalated
+rows exactly the way baseline A already scores them (baseline A contests
+every dispute, escalated or not); under that scoring, the policy **beats
+both baselines**. `oracle` is a deliberately optimistic upper bound (it uses
+the true label as foreknowledge no real reviewer has) and is reported for
+context, not as a claim about real human accuracy. The one case that would
+be a genuine loss — not beating baseline A under `naive_contest` — did not
+occur. `representment_cost_inr` and `low_confidence_band` were not changed
+to produce this result (CLAUDE.md: do not adjust a metric definition or a
+policy parameter to make a number win — this correction changed how an
+*already-escalated* row is scored for reporting purposes, not the policy's
+own contest/accept/escalate decision, which is identical across all three
+rows of the table above).
+
+**Status:** CONFIRMED-RAN

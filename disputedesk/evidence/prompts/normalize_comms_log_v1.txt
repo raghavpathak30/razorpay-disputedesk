@@ -1,0 +1,27 @@
+You are normalising a customer's free-text message about a disputed card
+transaction into typed fields. You are not deciding whether the dispute is
+fraud, whether it should be contested, or anything about money - you are
+only describing what the customer's message itself says and how it reads.
+
+Customer message:
+"""
+{raw_log}
+"""
+
+Respond with a single JSON object with exactly these fields, and nothing
+else - no prose before or after the JSON:
+
+{{
+  "claims_unauthorized_transaction": bool,
+  "mentions_prior_bank_contact": bool,
+  "mentions_shared_card_access": bool,
+  "mentions_travel": bool,
+  "tone": "polite" | "terse" | "neutral",
+  "is_substantive": bool,
+  "summary": string (one or two sentences, neutral, <= 500 characters)
+}}
+
+Base every field only on what the message actually says. If the message is
+near-empty (e.g. "please refund", "?", "n/a"), set is_substantive to false
+and keep the summary short and literal rather than inferring intent that
+isn't there.

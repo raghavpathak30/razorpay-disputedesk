@@ -1,0 +1,8 @@
+Your previous response did not parse as valid JSON matching the required
+schema. The validation error was:
+
+{error}
+
+Respond again, following the original instructions exactly. Return only the
+corrected JSON object - no prose, no markdown code fences, no explanation of
+what you changed.
