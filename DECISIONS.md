@@ -525,3 +525,105 @@ schema, or feature-encoding change was made in response to this number, and
 none should be made without a new dated entry here explaining why.
 
 **Status:** CONFIRMED-RAN
+
+## 2026-09-01 — Phase 4: Razorpay client, audit log, webhook, failure recovery
+
+**Decision:** `disputedesk/client/razorpay.py` implements `accept()`
+(`POST /v1/disputes/{id}/accept`) and `contest()` (`PATCH
+/v1/disputes/{id}/contest`), HTTP Basic Auth (`key_id:key_secret`).
+Verified against Razorpay's own documentation on 2026-09-01, not recalled
+from training data: `https://razorpay.com/docs/api/authentication/`
+(Basic Auth scheme, confirmed verbatim), `https://razorpay.com/docs/api/disputes/accept/`
+(method, empty body, `status` moves to `"lost"`, irreversible),
+`https://razorpay.com/docs/api/disputes/contest/` (method, full field list
+including per-evidence-type document-id lists and the `others` array
+shape, `action: "draft"|"submit"`, full example response), and
+`https://razorpay.com/docs/api/disputes/fetch-all/` (dispute entity field
+list, matching `DisputeRecord`). "Test mode" is not a separate base URL -
+it is determined by which key pair is configured - so
+`razorpay_api_base_url` in `disputedesk/config.py` defaults to the one real
+host either way.
+
+**Why (no document-upload pipeline):** the real `contest()` API expects
+evidence as pre-uploaded document ids (`doc_...`) per evidence type. This
+project never built a document-upload/file-storage path (not listed in
+SPEC.md or PHASES.md) - fabricating document ids that reference no real
+file would be worse than omitting them. `contest()` submits the drafted
+`explanation_letter` text as `summary` (truncated to the API's documented
+1000-character limit) with `action="submit"`; `required_evidence_types`
+(already computed by `evidence/reason_code_map.py`) are recorded in the
+audit log for a human reviewer, not attached as files. This is a real,
+load-bearing gap between this system and a production filing, stated here
+rather than left for a judge to discover.
+
+**Why (webhook envelope is an assumption, not a citation):** two lookups
+for Razorpay's specific dispute-webhook JSON envelope 404'd
+(`/docs/webhooks/payloads/disputes/`, `/docs/webhooks/payloads/`). The
+`disputedesk/api/schemas.py` envelope (`event` / `payload.dispute.entity`)
+follows Razorpay's well-known general webhook shape used elsewhere on its
+platform, not a page confirmed for disputes specifically - flagged in that
+module's own docstring, following the same assumption-vs-citation
+convention `evidence/reason_code_map.py` already established. What the
+route actually gates on is `status == "open"` (a `Literal["open"]` on the
+schema), the one field PHASES.md Phase 4 names directly ("receives an
+`open` dispute event") and the one verified against the real dispute
+entity. The order-context fields (`avs_match` through
+`checkout_hour_of_day`) are this system's own join, not part of Razorpay's
+webhook at all (SPEC.md §1 step 1) - assumed to arrive pre-joined, shaped
+like `DisputeRecord`'s own fields, since no order-lookup system exists in
+this project (out of scope).
+
+**Decision (audit log - two append-only tables, not one mutable row):**
+`disputedesk/audit/models.py` has `decisions` (one row per dispute, UNIQUE
+`dispute_id`, written *before* the Razorpay call - model_version, features,
+p_win, policy_branch, expected_value, prompt_version, validation_result,
+human_review_required) and `api_outcomes` (at most one row per dispute,
+UNIQUE `dispute_id`, written after the API call finishes - action, outcome,
+response/error). `disputedesk/audit/log.py` exposes only insert functions;
+no update or delete path exists anywhere in the codebase.
+
+**Why:** CLAUDE.md requires the decision persisted *before* the API call
+and the log append-only with *no update path*. A single mutable row can't
+satisfy both at once - filling in an API response after the call would be
+an UPDATE. Two insert-only tables, joined by `dispute_id` in
+`get_audit_trail`, get both properties literally rather than by convention.
+Each table's own `dispute_id` UNIQUE constraint is the idempotency gate
+PHASES.md Phase 4 item 2 asks the database (not application logic) to
+enforce - proven directly in `tests/test_audit_log.py` by inserting a
+duplicate row that bypasses `record_decision` entirely and asserting the
+database itself raises `IntegrityError`.
+
+**Decision (shared retry/backoff):** `disputedesk/retry.py`'s
+`call_with_backoff` - exponential backoff on `httpx.TimeoutException` or a
+429 (honoring `Retry-After`), any other exception propagates immediately -
+is used by both `disputedesk/client/razorpay.py` (SPEC.md §7 failure path
+1) and `disputedesk/evidence/llm.py`'s `GroqHttpLLMClient` (the free-tier
+429s the 2026-09-01 LLM-quality measurement above first hit). One helper,
+tested once (`tests/test_retry.py`), rather than each script/client
+re-implementing backoff - which is what PHASES.md Phase 4 item 7 asked to
+fix for the Groq path specifically.
+`tests/test_client_razorpay.py::test_timeout_then_success_files_exactly_once`
+proves this end to end against `RazorpayHttpClient` (via
+`httpx.MockTransport`, no real socket): a timeout followed by a successful
+retry results in exactly one successful response, not two filings.
+
+**Decision (no persisted model artifact):** `disputedesk/model/registry.py`
+trains one model in memory per process (`lru_cache`), fixed seed 42, from
+the same generate -> temporal-split -> train pipeline `eval/harness.py`
+already uses - not a new training path. `MODEL_VERSION` names the seed and
+config, recorded on every audit row. Building a real model-registry/
+persistence layer (joblib artifact, versioned storage) was out of scope for
+this phase (not listed in SPEC.md or PHASES.md) and would be new scope this
+session was not asked for; this is flagged as a real limitation, not
+silently treated as production-ready.
+
+**Caveats:** no test in this session makes a network call (`httpx.MockTransport`
+and `FakeLLMClient`/`FakeRazorpayClient` throughout, per CLAUDE.md). The
+demo script (`disputedesk/cli/demo.py`) is fully self-contained (fakes
+only, in-memory DB, in-memory model) so it runs from a clean clone with no
+`.env`; it demonstrates the timeout-retry mechanism by exercising
+`call_with_backoff` directly against a simulated `httpx.ConnectTimeout`
+rather than literally severing a network connection mid-run, since the
+demo has no live network call to sever by design.
+
+**Status:** DECIDED

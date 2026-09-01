@@ -11,6 +11,7 @@ from typing import Protocol
 import httpx
 
 from disputedesk.config import get_settings
+from disputedesk.retry import call_with_backoff
 
 
 class LLMClient(Protocol):
@@ -58,29 +59,42 @@ class GroqHttpLLMClient:
 
     See the 2026-08-31 "LLM provider: Groq" DECISIONS.md entry for which
     model is configured in `.env.example` and why.
+
+    Groq's free tier returns HTTP 429 under rate limits (see the 2026-09-01
+    "LLM normalisation quality" DECISIONS.md entry, which first hit this
+    against the real API) - `complete()` retries a 429 or a timeout with
+    `disputedesk.retry.call_with_backoff`, the same helper
+    `disputedesk/client/razorpay.py` uses, so this backoff lives in the
+    client itself (PHASES.md Phase 4) rather than being re-implemented by
+    every caller/eval script that happens to hit a rate limit.
     """
 
-    def __init__(self, timeout_seconds: float = 30.0):
+    def __init__(self, timeout_seconds: float = 30.0, max_retries: int = 3):
         settings = get_settings()
         self._api_url = settings.llm_api_url
         self._model = settings.llm_model
         self._api_key = settings.llm_api_key
         self._timeout_seconds = timeout_seconds
+        self._max_retries = max_retries
 
     def complete(self, prompt: str) -> str:
-        response = httpx.post(
-            self._api_url,
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "content-type": "application/json",
-            },
-            json={
-                "model": self._model,
-                "max_tokens": 1024,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=self._timeout_seconds,
-        )
-        response.raise_for_status()
+        def _call() -> httpx.Response:
+            response = httpx.post(
+                self._api_url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": self._model,
+                    "max_tokens": 1024,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+                timeout=self._timeout_seconds,
+            )
+            response.raise_for_status()
+            return response
+
+        response = call_with_backoff(_call, max_retries=self._max_retries)
         body = response.json()
         return body["choices"][0]["message"]["content"]

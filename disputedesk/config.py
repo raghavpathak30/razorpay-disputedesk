@@ -10,6 +10,10 @@ class Settings(BaseSettings):
 
     razorpay_key_id: str
     razorpay_key_secret: str
+    # Not a separate host for test vs. live mode - Razorpay determines mode from
+    # which key pair (test vs. live prefix) is configured, not the URL. Has a
+    # default so existing .env files without this line keep working.
+    razorpay_api_base_url: str = "https://api.razorpay.com/v1"
     llm_api_key: str
     llm_api_url: str
     llm_model: str
