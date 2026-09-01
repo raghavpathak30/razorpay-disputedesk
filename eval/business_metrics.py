@@ -35,7 +35,6 @@ default outcome, not the raw loss.
       since that baseline already assumes this outcome for these same rows.
 """
 
-from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -45,12 +44,6 @@ from disputedesk.policy.config import PolicyConfig
 from disputedesk.policy.engine import Decision, decide
 
 EscalateMode = Literal["zero", "oracle", "naive_contest"]
-
-
-@dataclass(frozen=True)
-class BusinessOutcome:
-    recovered_inr: np.ndarray  # per-row, policy-decided recovery
-    decisions: np.ndarray  # per-row Decision values
 
 
 def decide_batch(p_win: np.ndarray, amount: np.ndarray, config: PolicyConfig) -> np.ndarray:
@@ -173,6 +166,33 @@ def per_1000(total: float, n: int) -> float:
     return total / n * 1000.0
 
 
+def _cost_and_escalate_summary(
+    decisions: np.ndarray,
+    won_if_contested: np.ndarray,
+    amount: np.ndarray,
+    representment_cost_inr: float,
+) -> dict:
+    """False-positive/false-negative cost and escalated-dispute totals for one
+    seed's decisions - split out of `build_business_row` as its own coherent
+    group of "cost" fields, distinct from the recovered-rupees-by-mode group.
+    """
+    n = len(amount)
+    fp_count, fp_total_inr = false_positive_cost(
+        decisions, won_if_contested, representment_cost_inr
+    )
+    fn_count, fn_total_inr = false_negative_cost(decisions, won_if_contested, amount)
+    escalate_count, escalate_total_amount_inr = escalated_summary(decisions, amount)
+    return {
+        "false_positive_count": fp_count,
+        "false_positive_cost_per_1000_inr": per_1000(fp_total_inr, n),
+        "false_negative_count": fn_count,
+        "false_negative_cost_per_1000_inr": per_1000(fn_total_inr, n),
+        "escalated_count": escalate_count,
+        "escalated_amount_per_1000_inr": per_1000(escalate_total_amount_inr, n),
+        "escalated_amount_share_of_holdout": escalated_amount_share(decisions, amount),
+    }
+
+
 def build_business_row(
     p_win: np.ndarray,
     won_if_contested: np.ndarray,
@@ -196,12 +216,6 @@ def build_business_row(
     )
     baseline_b_recovered = accept_everything_recovered(n)
 
-    fp_count, fp_total_inr = false_positive_cost(
-        decisions, won_if_contested, config.representment_cost_inr
-    )
-    fn_count, fn_total_inr = false_negative_cost(decisions, won_if_contested, amount)
-    escalate_count, escalate_total_amount_inr = escalated_summary(decisions, amount)
-
     return {
         "n": n,
         # Default headline (most conservative: no outcome claimed for
@@ -220,13 +234,9 @@ def build_business_row(
         "baseline_b_accept_everything_recovered_per_1000_inr": per_1000(
             baseline_b_recovered.sum(), n
         ),
-        "false_positive_count": fp_count,
-        "false_positive_cost_per_1000_inr": per_1000(fp_total_inr, n),
-        "false_negative_count": fn_count,
-        "false_negative_cost_per_1000_inr": per_1000(fn_total_inr, n),
-        "escalated_count": escalate_count,
-        "escalated_amount_per_1000_inr": per_1000(escalate_total_amount_inr, n),
-        "escalated_amount_share_of_holdout": escalated_amount_share(decisions, amount),
+        **_cost_and_escalate_summary(
+            decisions, won_if_contested, amount, config.representment_cost_inr
+        ),
     }
 
 

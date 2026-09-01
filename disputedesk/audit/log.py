@@ -37,18 +37,12 @@ def record_decision(
     validation_result: str,
     human_review_required: bool,
 ) -> tuple[DecisionRecord, bool]:
-    """Insert one decision row - PHASES.md Phase 4 item 3: called before the
-    Razorpay API is ever touched for this dispute. Returns `(row,
-    was_newly_created)`.
+    """Insert one decision row before the Razorpay API is ever touched
+    (PHASES.md Phase 4 item 3). Returns `(row, was_newly_created)`.
 
-    A fast-path existence check runs first purely to avoid doing the insert
-    (and, for the caller, the LLM calls that produced these arguments) for a
-    dispute already decided. The actual idempotency guarantee is the
-    `dispute_id` UNIQUE constraint on `decisions` (`disputedesk/audit/models.py`)
-    caught below: even if two requests for the same dispute race past the
-    fast-path check simultaneously, only one `INSERT` can ever succeed -
-    this is the database enforcement PHASES.md Phase 4 item 2 asks for, not
-    just this check.
+    The check below is only a fast path; the real idempotency guarantee is
+    the `dispute_id` UNIQUE constraint caught by `except IntegrityError`, so
+    a request racing past the check still only lets one `INSERT` succeed.
     """
     existing = get_decision(session, dispute_id)
     if existing is not None:

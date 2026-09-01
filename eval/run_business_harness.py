@@ -15,29 +15,7 @@ from eval.business_harness import fixed_seed_set, policy_beats_baseline, run_bus
 from eval.business_metrics import summarize_business
 
 
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        description="Run the Phase 3 cost-weighted eval harness (SPEC.md §6)."
-    )
-    parser.add_argument("--n-seeds", type=int, default=20)
-    parser.add_argument("--seed-start", type=int, default=0)
-    parser.add_argument("--n-rows", type=int, default=15000)
-    parser.add_argument("--out-dir", type=Path, default=Path("data/eval"))
-    args = parser.parse_args(argv)
-
-    seeds = fixed_seed_set(args.n_seeds, start=args.seed_start)
-    per_seed = run_business_harness(
-        seeds, args.n_rows, GeneratorConfig(), ModelConfig(), PolicyConfig()
-    )
-    summary = summarize_business(per_seed)
-
-    args.out_dir.mkdir(parents=True, exist_ok=True)
-    per_seed.to_csv(args.out_dir / "business_per_seed_do_not_report_individually.csv", index=False)
-    summary.to_csv(args.out_dir / "business_headline_median_iqr.csv")
-
-    print(f"seeds: {seeds[0]}..{seeds[-1]} (n={len(seeds)}), n_rows per seed: {args.n_rows}")
-    print(f"representment_cost_inr: {PolicyConfig().representment_cost_inr}")
-    print()
+def _print_report(summary, out_dir: Path) -> None:
     print(summary.to_string(float_format=lambda x: f"{x:.2f}"))
     print()
     print(
@@ -64,8 +42,34 @@ def main(argv: list[str] | None = None) -> None:
             "CLAUDE.md/PHASES.md - not adjusted to make it win."
         )
     print()
-    print(f"wrote {args.out_dir / 'business_per_seed_do_not_report_individually.csv'}")
-    print(f"wrote {args.out_dir / 'business_headline_median_iqr.csv'}")
+    print(f"wrote {out_dir / 'business_per_seed_do_not_report_individually.csv'}")
+    print(f"wrote {out_dir / 'business_headline_median_iqr.csv'}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        description="Run the Phase 3 cost-weighted eval harness (SPEC.md §6)."
+    )
+    parser.add_argument("--n-seeds", type=int, default=20)
+    parser.add_argument("--seed-start", type=int, default=0)
+    parser.add_argument("--n-rows", type=int, default=15000)
+    parser.add_argument("--out-dir", type=Path, default=Path("data/eval"))
+    args = parser.parse_args(argv)
+
+    seeds = fixed_seed_set(args.n_seeds, start=args.seed_start)
+    per_seed = run_business_harness(
+        seeds, args.n_rows, GeneratorConfig(), ModelConfig(), PolicyConfig()
+    )
+    summary = summarize_business(per_seed)
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    per_seed.to_csv(args.out_dir / "business_per_seed_do_not_report_individually.csv", index=False)
+    summary.to_csv(args.out_dir / "business_headline_median_iqr.csv")
+
+    print(f"seeds: {seeds[0]}..{seeds[-1]} (n={len(seeds)}), n_rows per seed: {args.n_rows}")
+    print(f"representment_cost_inr: {PolicyConfig().representment_cost_inr}")
+    print()
+    _print_report(summary, args.out_dir)
 
 
 if __name__ == "__main__":
