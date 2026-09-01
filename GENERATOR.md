@@ -607,6 +607,20 @@ on the front end, but can be contested after the fact" bucket this whole
 project targets, which is a small but genuine external validation of the scope
 decision in DECISIONS.md's track-selection entry.
 
+**Update, 2026-09-01 — Visa 83 superseded, table row left as published.**
+Visa retired standalone reason code 83 in 2018 under Visa Claims Resolution
+(VCR), reclassifying card-not-present fraud into the 10.x dispute conditions;
+the current equivalent for this generator's CNP-fraud scenario is condition
+10.4, "Other Fraud – Card-Absent Environment". The system's `reason_code`
+value set (`disputedesk/generator/config.py`, `disputedesk/features/build.py`)
+has been updated from `VISA_83` to `VISA_10_4` accordingly — see
+`DECISIONS.md`'s 2026-09-01 "Visa reason code rename" entry. The table row
+above is left exactly as Razorpay's cited PDF publishes it (re-fetched
+2026-09-01: still lists code 83, not 10.4) — Razorpay's own reference has not
+been updated to the post-VCR scheme, so this project's `reason_code` value now
+knowingly diverges from the one live source cited above, in favor of the
+correct current Visa condition rather than a stale published one.
+
 **Explicitly left unconfirmed, not invented:** the source document's five pages
 cover Mastercard, Visa, and Amex only — no RuPay or Diners table was present.
 Since Razorpay is a predominantly India-facing gateway, a RuPay fraud code is a

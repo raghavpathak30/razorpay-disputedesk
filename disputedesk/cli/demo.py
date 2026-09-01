@@ -145,7 +145,7 @@ WEAK_EVIDENCE_EVENT = {
                 "payment_id": "pay_demo_weak_001",
                 "amount": 2200.0,
                 "currency": "INR",
-                "reason_code": "VISA_83",
+                "reason_code": "VISA_10_4",
                 "phase": "chargeback",
                 "status": "open",
                 "avs_match": False,
@@ -491,7 +491,7 @@ def demo_segment_b_llm_letters() -> bool:
         llm_client,
     )
     _print_letter_sample(
-        "Dispute B - VISA_83, documented evidence gap (no AVS/CVV/device/delivery signal)",
+        "Dispute B - VISA_10_4, documented evidence gap (no AVS/CVV/device/delivery signal)",
         WEAK_EVIDENCE_EVENT,
         llm_client,
     )

@@ -20,7 +20,7 @@ Excluded on purpose, and why:
 - `won_if_contested`: the label.
 """
 
-REASON_CODES: tuple[str, ...] = ("MC_4837", "MC_4840", "VISA_83", "AMEX_FR2")
+REASON_CODES: tuple[str, ...] = ("MC_4837", "MC_4840", "VISA_10_4", "AMEX_FR2")
 CARD_NETWORKS: tuple[str, ...] = ("Visa", "Mastercard", "RuPay", "Amex")
 
 # Column order the model is trained and predicted on. Kept as one list so

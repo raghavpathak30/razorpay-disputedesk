@@ -36,7 +36,7 @@ BASE_ROW = {
     "checkout_hour_of_day": 14,
     "card_network": "Visa",
     "customer_communication_log": "I don't recognize this charge.",
-    "reason_code": "VISA_83",
+    "reason_code": "VISA_10_4",
     "won_if_contested": True,
 }
 
@@ -50,7 +50,7 @@ def test_build_features_selects_and_types_every_column():
     assert features["cvv_match"] is False
     assert features["prior_order_count"] == 12
     assert features["checkout_hour_of_day"] == 14
-    assert features["reason_code"] == REASON_CODES.index("VISA_83")
+    assert features["reason_code"] == REASON_CODES.index("VISA_10_4")
     assert features["card_network"] == CARD_NETWORKS.index("Visa")
 
 

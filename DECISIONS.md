@@ -1151,3 +1151,312 @@ zero forever." `disputedesk/evidence/prompts/explanation_letter_v1.txt` and
 `disputedesk/evidence/llm.py`'s request parameters and usage handling.
 
 **Status:** CONFIRMED-RAN
+
+## 2026-09-01 — Policy precision/recall added to the cost sweep; Phase 2 threshold coincidence checked per-seed
+
+Read-only investigation (a prior session, same day) traced the contest/accept
+predicate end to end and found the Phase 2 precision/recall headline
+(`eval/harness.py`, threshold = train-split label mean, median 0.2543) was
+never consumed by the policy engine - it's a Phase-2-era placeholder,
+unrelated to `decide()`'s expected-value rule. This entry adds the policy's
+own precision/recall to the existing `representment_cost_inr` sweep
+(`eval/cost_sensitivity.py`) so the real operating numbers can be reported
+alongside the rupee curve from the 2026-08-31 "representment_cost_inr
+sensitivity sweep" entry above, and records a per-seed check of whether the
+Phase 2 number's resemblance to the configured-cost precision is real or
+coincidental.
+
+**1. Policy precision/recall, added to the sweep.** `eval/cost_sensitivity.py`
+now computes, for every (seed, cost) pair already in the sweep: CONTEST as
+the positive prediction, `won_if_contested` as the label, `precision_score`/
+`recall_score` (`sklearn.metrics`, `zero_division=0`) against the same
+`decide_batch` decisions already used for the rupee numbers - no retraining,
+no new predictions, same `run_seed_pipeline` output reused per seed as
+before. `summarize_sweep` reports median/q25/q75 across the 20 seeds, same
+convention as every other headline in this project.
+
+**2. ESCALATE convention, stated and enforced, not just documented.**
+ESCALATE rows are folded in as a *positive* prediction, alongside CONTEST.
+This matches `ESCALATE_MODE = "naive_contest"`, already used for the rupee
+recovery numbers, where an escalated row is credited exactly as if it had
+been contested - so precision/recall and the rupee numbers describe the same
+underlying set of "effectively contested" rows, not two different
+definitions side by side in one table. This is enforced, not just narrated:
+`eval/cost_sensitivity._predicted_positive` raises `NotImplementedError` if
+`ESCALATE_MODE` is ever changed away from `"naive_contest"` without this
+function being updated to match.
+
+**Result**, seeds 0-19, n_rows=15000 per seed, `low_confidence_band=(0.45,
+0.55)` held fixed (same run as the 2026-08-31 sweep entry):
+
+| cost | precision (median, IQR) | recall (median, IQR) | policy advantage vs. baseline A (median, INR/1,000) |
+|---|---|---|---|
+| 0 | 0.2377 (0.2331-0.2422) | 1.0000 (1.0000-1.0000) | 0 |
+| 50 | 0.2378 (0.2333-0.2423) | 1.0000 (0.9985-1.0000) | -219 |
+| 100 | 0.2387 (0.2340-0.2429) | 0.9965 (0.9917-0.9977) | -163 |
+| 200 | 0.2432 (0.2378-0.2467) | 0.9768 (0.9753-0.9812) | +1,772 |
+| 300 | 0.2479 (0.2422-0.2524) | 0.9506 (0.9459-0.9578) | +4,209 |
+| **400 (configured default)** | **0.2543 (0.2476-0.2569)** | **0.9155 (0.9111-0.9232)** | **+12,923** |
+| 600 | 0.2641 (0.2571-0.2675) | 0.8446 (0.8301-0.8513) | +44,403 |
+| 800 | 0.2724 (0.2672-0.2775) | 0.7726 (0.7655-0.7812) | +86,000 |
+| 1,000 | 0.2791 (0.2700-0.2849) | 0.7036 (0.6957-0.7126) | +152,071 |
+| 1,500 | 0.2915 (0.2848-0.2979) | 0.5613 (0.5513-0.5715) | +390,402 |
+| 2,000 | 0.2991 (0.2949-0.3080) | 0.4521 (0.4380-0.4744) | +669,547 |
+| 3,000 | 0.3142 (0.3074-0.3278) | 0.3123 (0.2999-0.3443) | +1,384,613 |
+| 4,000 | 0.3233 (0.3137-0.3375) | 0.2339 (0.2207-0.2558) | +2,168,360 |
+| 6,000 | 0.3369 (0.3264-0.3644) | 0.1540 (0.1408-0.1759) | +3,893,929 |
+| 8,000 | 0.3467 (0.3346-0.3780) | 0.1252 (0.1100-0.1369) | +5,722,304 |
+| 10,000 | 0.3599 (0.3435-0.3868) | 0.1069 (0.0981-0.1192) | +7,573,243 |
+
+At cost=0, precision (0.2377) equals the test-split label prevalence exactly
+- expected by construction, since recall=1.0 there means every row is
+effectively contested, so precision degenerates to prevalence. Precision
+rises and recall falls monotonically as cost rises, matching `decide()`'s
+mechanics: a higher cost raises the per-row breakeven `p_win` required to
+contest (`expected_value = p_win * amount - cost > 0`), so the policy
+contests a narrower, higher-precision, lower-recall slice as cost grows.
+₹400 is the configured default, not "the" operating point - the table above,
+not any single row of it, is the result; the cost-sensitivity framing from
+the 2026-08-31 entry (near-parity with baseline A below ≈290, growing and
+monotonic advantage above ≈300) applies here exactly as it does to the
+rupee numbers.
+
+**3. Per-seed coincidence check.** The configured-cost (400) precision
+median, 0.2543, is visually identical to the unrelated Phase 2 placeholder
+threshold's median (also 0.2543, train-split label mean). Checked whether
+this is the same quantity (a plumbing bug: precision reading train-split
+data instead of holdout decisions) or two different statistics whose medians
+merely coincide. For each of the 20 seeds: A = that seed's train-split label
+mean (`SeedResult.threshold`, `eval/harness.py`), B = that seed's policy
+precision at `representment_cost_inr=400` from this sweep. **A ≠ B at every
+one of the 20 seeds** (no seed has A−B = 0; signs vary, e.g. seed 15:
+A−B=+0.02091, seed 17: A−B=−0.01861) - **they agree only at the median, not
+per-seed.** Spread of A−B across seeds: min=-0.018614, max=+0.020911,
+mean=+0.001208, population stdev=0.008088. Conclusion: no plumbing bug - A
+and B are computed from different splits by different code paths (A from
+`train_df` before any model/policy runs; B from the holdout `test_df`'s
+`decide_batch` decisions); their medians sitting close is coincidental, both
+being statistics that land near this generator's overall label prevalence,
+not evidence of shared computation. Not investigated further since the
+result was negative (no bug found); reproducible via the seed loop in this
+session's transcript (`run_seed_pipeline` + `_predicted_positive` +
+`precision_score`, `representment_cost_inr=400`, `n_rows=15000`, seeds
+0-19).
+
+**How:** `python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000`
+(uses the module's own `DEFAULT_COSTS`, a superset of the rows above).
+Writes the same two files as the 2026-08-31 sweep entry; the precision/recall
+columns are new columns on the same per-seed and summary CSVs, not a
+separate artifact.
+
+**Status:** CONFIRMED-RAN
+
+## 2026-09-01 — Visa reason code rename: `VISA_83` -> `VISA_10_4`
+
+**Rename, not a re-derivation.** Visa retired standalone reason code 83 in
+2018 under Visa Claims Resolution (VCR), reclassifying card-not-present
+fraud into the 10.x dispute conditions. The current equivalent for this
+generator's CNP-fraud scenario is condition 10.4, "Other Fraud – Card-Absent
+Environment." User-verified against multiple chargeback references outside
+this repo, 2026-09-01. `VISA_83` renamed to `VISA_10_4` everywhere it
+appeared as a live value: `disputedesk/generator/config.py`,
+`disputedesk/features/build.py` (`REASON_CODES`, same tuple position, index
+2 - the ordinal encoding a trained model sees is unchanged),
+`disputedesk/evidence/reason_code_map.py`, `disputedesk/cli/demo.py`'s
+`WEAK_EVIDENCE_EVENT` fixture and Segment B print label,
+`eval/run_llm_letter_validation_reliability.py`'s fixture label, `README.md`,
+and the affected tests (`tests/test_evidence_draft_letter.py`,
+`tests/test_features_build.py`). Not touched: this file's own prior dated
+entries (append-only - they correctly describe runs that used `VISA_83` at
+the time) and gitignored generated artifacts under `data/`, which regenerate
+naturally.
+
+**Sanity check against the repo's own cited source - it disagrees.**
+`GENERATOR.md` §8 cites Razorpay's published chargeback reference
+(`https://cdn.razorpay.com/files/chargeback_codes.pdf`) for the four
+`reason_code` values. Re-fetched 2026-09-01: it still lists, verbatim,
+`VISA | 83 | Fraud-Card Absent Environment | Fraud`. Razorpay's own reference
+has not been updated to the post-VCR 10.x scheme. `GENERATOR.md`'s table row
+is left exactly as published (a citation should say what its source says,
+not what we wish it said) with a new dated revision note next to it
+explaining that the system's live `reason_code` value has diverged from that
+citation on purpose, in favor of the currently-correct Visa condition over a
+stale published one.
+
+**Evidence-map check under 10.4 (checklist item from this session):**
+`REQUIRED_EVIDENCE_BY_REASON_CODE["VISA_10_4"]` still maps to the same
+`_CNP_FRAUD_EVIDENCE` tuple as the other three codes - `billing_proof`
+(AVS/CVV), `access_activity_log` (device/IP), `proof_of_service` (delivery),
+`customer_communication`, `explanation_letter`. **Gap found, not fixed:**
+neither `SPEC.md` §3's fixed evidence-object vocabulary
+(`shipping_proof`, `billing_proof`, `cancellation_proof`,
+`customer_communication`, `proof_of_service`, `explanation_letter`,
+`refund_confirmation`, `access_activity_log`, `refund_cancellation_policy`,
+`terms_and_conditions`, `others`) nor the order-context data model
+(`disputedesk/evidence/context.py`'s `DisputeContext`, or `SPEC.md` §3's
+"Order context" field list) has a slot for 3-D Secure / Visa Secure
+authentication data at all - `billing_proof` already stands in for "the
+charge was authenticated as this cardholder" generally (AVS/CVV), not 3DS
+liability-shift data specifically. This is a real gap for condition 10.4,
+which VCR designed 3DS/Visa Secure authentication evidence to address
+directly, but it is a data-model gap (no field anywhere upstream to source
+it from), not a one-line fix to this map. Deliberately not added - doing so
+would tell the letter-drafting LLM authentication evidence is available that
+the system does not actually have. Flagged for a future session; needs a new
+`DisputeContext`/order-context field before the map can honestly claim it.
+
+**Deterministic demo, re-verified stable at the new value.** Ran
+`python -m disputedesk.cli.demo --deterministic-only` twice after the
+rename; `diff` between the two runs is empty. This confirms Segment A is
+reproducible at its new value, not that it matches a pre-rename capture (none
+was taken - CLAUDE.md's revision-history convention doesn't require
+recording an exact stdout snapshot pre-change to compare against, only that
+the property being claimed, reproducibility, still holds after). Structurally,
+this rename could not have changed any *number* Segment A prints: `VISA_10_4`
+occupies the same tuple position (index 2) in `REASON_CODES` as `VISA_83`
+did, so the ordinal integer the model actually sees for the weak-evidence
+dispute (`disp_demo_weak_001`, `p_win=0.0756`, decision=`accept`) is bit-for-
+bit unchanged; Segment A's stdout never prints the literal reason-code string
+in the first place (only `dispute_id`, `p_win`, `decision`,
+`expected_value_inr`), so no printed text differs either.
+
+**Letter-drafting reliability, re-measured for `weak_evidence` only (this
+fixture's reason code goes into the letter prompt as input, so the prior
+20-run result no longer describes what's actually shipped).** Same harness,
+unchanged (`eval.llm_letter_validation_reliability.run_letter_reliability_sample`
+via `eval/run_llm_letter_validation_reliability.py`'s own `_run_for_event`,
+called directly for this one fixture only - `full_evidence`/`MC_4837` and the
+prompt template were not touched, per instruction), live Groq,
+`reasoning_effort="low"`, n=20:
+
+| | before (`VISA_83`, 2026-09-01 "re-measured after the fix" entry) | after (`VISA_10_4`, this entry) |
+|---|---|---|
+| first draft passed validation | 20/20 (100%) | 20/20 (100%) |
+| repair attempted | 0/20 | 0/20 |
+| final path = template_fallback | 0/20 (0%) | 0/20 (0%) |
+
+**Result: unchanged.** 20/20 first-draft-valid, 0 repairs, 0 template
+fallbacks - identical to the pre-rename measurement. Expected: the reason
+code is one short token substituted into the same prompt template
+(`disputedesk/evidence/prompts/explanation_letter_v1.txt`, not touched), and
+nothing about `VISA_10_4` vs `VISA_83` changes prompt length, JSON shape, or
+completion-token budget in a way that would move a truncation-driven failure
+mode (the actual root cause identified in the 2026-09-01 "Letter-drafting
+reliability, re-measured after the fix" entry). Not investigated further
+since the result was the expected null result, not a surprise.
+
+**Caveats:** n=20, one run at `reasoning_effort="low"`, same one-shot
+precedent as every other letter-drafting reliability measurement in this
+file (CLAUDE.md invariant 3 governs headline claims about this *system's*
+own performance, not a diagnostic measurement of a third-party model's
+behavior on one fixed prompt per fixture). A 0% failure rate at n=20 is
+consistent with a true rate as high as roughly 14% at typical confidence
+levels. `full_evidence` (`MC_4837`) was not re-run - it is unaffected by this
+rename and its prior 20/20 result still describes the shipped fixture
+unchanged.
+
+**How:** ad hoc script calling
+`eval.run_llm_letter_validation_reliability._run_for_event(WEAK_EVIDENCE_EVENT,
+"low", 20, 8.0)` directly (the same function the CLI's `main()` calls per
+fixture) - not a modification to the harness or the CLI script, just a
+narrower invocation for one fixture. Full test suite (207 tests) and `ruff
+check`/`ruff format --check` pass after the rename.
+
+**Status:** CONFIRMED-RAN
+
+## 2026-09-02 — ESCALATE rate added to the cost sweep; naive_contest's zero-human-cost assumption sized as a sensitivity
+
+Read-only measurement plus a small addition to the existing
+`representment_cost_inr` sweep output (`eval/cost_sensitivity.py`) - no
+change to `disputedesk/policy/engine.py` or to `ESCALATE_MODE`.
+
+**1. ESCALATE rate, added as a column.** `eval/cost_sensitivity.sweep_seed`
+now also records `policy_escalate_rate` (fraction of the holdout where
+`decide()` returns `Decision.ESCALATE`) per (seed, cost); `summarize_sweep`
+reports its median/q25/q75 alongside precision, recall, and the rupee
+numbers, same 20-seed convention as everything else. Full table, seeds
+0-19, n_rows=15000 per seed:
+
+| cost | precision (median, IQR) | recall (median, IQR) | escalate rate (median, IQR) | policy advantage vs. baseline A (median, INR/1,000) |
+|---|---|---|---|---|
+| 0 | 0.2377 (0.2331-0.2422) | 1.0000 (1.0000-1.0000) | 0.0562 (0.0485-0.0624) | 0 |
+| 50 | 0.2378 (0.2333-0.2423) | 1.0000 (0.9985-1.0000) | 0.0562 (0.0485-0.0624) | -219 |
+| 100 | 0.2387 (0.2340-0.2429) | 0.9965 (0.9917-0.9977) | 0.0562 (0.0485-0.0624) | -163 |
+| 200 | 0.2432 (0.2378-0.2467) | 0.9768 (0.9753-0.9812) | 0.0562 (0.0485-0.0624) | +1,772 |
+| 300 | 0.2479 (0.2422-0.2524) | 0.9506 (0.9459-0.9578) | 0.0562 (0.0485-0.0624) | +4,209 |
+| **400 (configured default)** | **0.2543 (0.2476-0.2569)** | **0.9155 (0.9111-0.9232)** | **0.0562 (0.0485-0.0624)** | **+12,923** |
+| 600 | 0.2641 (0.2571-0.2675) | 0.8446 (0.8301-0.8513) | 0.0562 (0.0485-0.0624) | +44,403 |
+| 800 | 0.2724 (0.2672-0.2775) | 0.7726 (0.7655-0.7812) | 0.0562 (0.0485-0.0624) | +86,000 |
+| 1,000 | 0.2791 (0.2700-0.2849) | 0.7036 (0.6957-0.7126) | 0.0562 (0.0485-0.0624) | +152,071 |
+| 1,500 | 0.2915 (0.2848-0.2979) | 0.5613 (0.5513-0.5715) | 0.0562 (0.0485-0.0624) | +390,402 |
+| 2,000 | 0.2991 (0.2949-0.3080) | 0.4521 (0.4380-0.4744) | 0.0562 (0.0485-0.0624) | +669,547 |
+| 3,000 | 0.3142 (0.3074-0.3278) | 0.3123 (0.2999-0.3443) | 0.0562 (0.0485-0.0624) | +1,384,613 |
+| 4,000 | 0.3233 (0.3137-0.3375) | 0.2339 (0.2207-0.2558) | 0.0562 (0.0485-0.0624) | +2,168,360 |
+| 6,000 | 0.3369 (0.3264-0.3644) | 0.1540 (0.1408-0.1759) | 0.0562 (0.0485-0.0624) | +3,893,929 |
+| 8,000 | 0.3467 (0.3346-0.3780) | 0.1252 (0.1100-0.1369) | 0.0562 (0.0485-0.0624) | +5,722,304 |
+| 10,000 | 0.3599 (0.3435-0.3868) | 0.1069 (0.0981-0.1192) | 0.0562 (0.0485-0.0624) | +7,573,243 |
+
+**The escalate rate is measured constant across every swept cost, confirming
+a structural fact rather than assuming it.** `decide()`'s low-confidence
+check (`low <= p_win <= high`) runs before the cost-dependent
+`expected_value`/CONTEST-vs-ACCEPT branch and never reads `cost` or `amount`
+(`disputedesk/policy/engine.py`) - which rows escalate is fixed by `p_win`
+and `low_confidence_band` alone, both held fixed across this sweep, so the
+rate cannot move with cost by construction. Measured median 0.0562
+(IQR 0.0485-0.0624) at all 16 swept values, verified per-seed
+(`tests/test_eval_cost_sensitivity.py::test_escalate_rate_is_invariant_to_cost_per_seed`)
+rather than taken on faith.
+
+**2. Sensitivity: how much of the advantage figure is the
+zero-human-cost assumption load-bearing on?** `ESCALATE_MODE="naive_contest"`
+credits every escalated row as contested at the *true* win rate
+(`won_if_contested`, not a simulated coin flip) and at zero cost beyond the
+`representment_cost_inr` already charged for the filing itself - i.e., a
+human reviewer's time costs nothing extra. Bounded sensitivity (not a new
+headline, `ESCALATE_MODE` and `disputedesk/policy/` untouched): if a human
+reviewer instead costs one *additional* `representment_cost_inr` per
+escalated-and-contested row (same win rate, same filing cost, plus this one
+new cost), every escalated row's credited rupees drops by exactly
+`representment_cost_inr`, regardless of win/loss. Aggregated per 1,000
+disputes, the overstatement this introduces into the reported
+`policy_advantage_median` is `escalate_rate_median x representment_cost_inr x
+1000`:
+
+| cost | escalate rate (median) | overstatement (INR/1,000) | reported advantage (INR/1,000) | overstatement / advantage | advantage after this adjustment |
+|---|---|---|---|---|---|
+| **400 (configured default)** | 0.056189 | **22,475** | 12,923 | **174%** | **-9,553** |
+| 600 | 0.056189 | 33,713 | 44,403 | 76% | +10,690 |
+| 1,000 | 0.056189 | 56,189 | 152,071 | 37% | +95,882 |
+| 2,000 | 0.056189 | 112,377 | 669,547 | 17% | +557,169 |
+| 4,000 | 0.056189 | 224,754 | 2,168,360 | 10% | +1,943,606 |
+| 10,000 | 0.056189 | 561,886 | 7,573,243 | 7% | +7,011,357 |
+
+**At the configured default (400), the assumption is load-bearing, not
+negligible: the overstatement (22,475/1,000) is larger than the entire
+reported advantage (12,923/1,000).** Under this one alternative assumption
+- human review costs as much as a representment filing, changing nothing
+else - the sign of the headline comparison flips: the policy would trail
+baseline A by roughly 9,553/1,000 at cost=400, not lead it by 12,923/1,000.
+This is not a claim that the alternative assumption is correct (no real
+human-review cost was measured or is being proposed here - `PolicyConfig`
+gained no new parameter), only that the currently-reported advantage at the
+configured cost is thin enough (a ~0.75% margin over baseline A, per the
+2026-08-31 sweep entry) that it does not survive this specific, plausible
+alternative pricing of escalation. **The ratio shrinks fast as cost rises**
+(174% at 400, down to 7% at 10,000) because the overstatement term grows
+only linearly in cost while the advantage itself grows faster - so this
+assumption matters most exactly where the headline number already sits on
+its thinnest margin (near the configured default), and is immaterial in the
+high-cost regime where the advantage is already large and robust.
+
+**How:** same 20-seed, 16-cost sweep as the 2026-09-01 "Policy
+precision/recall added to the cost sweep" entry
+(`python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000`); the
+escalate-rate column and the sensitivity table above are read off the same
+per-seed/summary CSVs, not a separate run. Full test suite (209 tests,
+including the two new escalate-rate checks in
+`tests/test_eval_cost_sensitivity.py`) and `ruff check`/`ruff format --check`
+pass (three pre-existing, unrelated formatting drifts in files this session
+did not touch are left as found).
+
+**Status:** CONFIRMED-RAN

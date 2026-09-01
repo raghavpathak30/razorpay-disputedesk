@@ -45,7 +45,7 @@ from eval.llm_letter_validation_reliability import (
 
 _LABELED_EVENTS = (
     ("full_evidence (MC_4837)", CONTEST_WORTHY_EVENT),
-    ("weak_evidence (VISA_83)", WEAK_EVIDENCE_EVENT),
+    ("weak_evidence (VISA_10_4)", WEAK_EVIDENCE_EVENT),
 )
 
 

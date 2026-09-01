@@ -11,7 +11,7 @@ from disputedesk.evidence.llm import FakeLLMClient
 from disputedesk.evidence.schemas import NormalizedCommunicationLog
 
 CONTEXT = DisputeContext(
-    reason_code="VISA_83",
+    reason_code="VISA_10_4",
     amount=5000.0,
     avs_match=True,
     cvv_match=True,
@@ -58,7 +58,7 @@ def test_falls_back_to_deterministic_template_after_two_bad_responses():
     result = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
 
     assert result.human_review_required is True
-    assert "VISA_83" in result.letter.letter_text
+    assert "VISA_10_4" in result.letter.letter_text
     assert "5000.00" in result.letter.letter_text
     assert list(result.letter.cites_evidence_types) == list(EVIDENCE_TYPES)
 

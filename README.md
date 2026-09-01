@@ -2,7 +2,7 @@
 
 Razorpay AI Buildathon, Track 02 (AI Risk Manager). One loss class:
 **fraud-reason-code chargebacks** (the four confirmed card-network codes in
-`GENERATOR.md` §8 — `MC_4837`, `MC_4840`, `VISA_83`, `AMEX_FR2`).
+`GENERATOR.md` §8 — `MC_4837`, `MC_4840`, `VISA_10_4`, `AMEX_FR2`).
 
 A merchant today either contests every fraud-reason-code chargeback it
 receives (burning analyst time and accruing excessive-representment
@@ -131,19 +131,69 @@ invariant 2). Reproduce with `python -m eval.run_harness --n-seeds 20
 | Oracle Bayes ceiling (closed-form, `eval/oracle.py`) | 0.4572 | 0.4527–0.4585 |
 | Calibration error (ECE, 10 equal-width bins) | 0.0270 | 0.0208–0.0314 |
 
+**Policy precision/recall**, across the same `representment_cost_inr` sweep
+as "Cost sensitivity" below (0 → 10,000, 20 seeds, `low_confidence_band`
+held fixed) — this, not any single-threshold figure, is the operating
+result. CONTEST counts as the positive prediction; ESCALATE is folded in as
+a positive prediction too, matching `ESCALATE_MODE = "naive_contest"` (the
+same convention the rupee numbers below use — an escalated dispute is
+credited exactly as if it had been contested, so precision/recall and the
+rupee numbers describe the same set of "effectively contested" rows). ₹400
+is `PolicyConfig`'s **configured default**, not "the" operating point — the
+row it lands on is bolded below for reference, not singled out as special:
+
+| Cost (₹) | Precision | Recall | Policy advantage vs. baseline A (INR/1,000, median) |
+|---:|---|---|---:|
+| 0 | 0.2377 (0.2331–0.2422) | 1.0000 (1.0000–1.0000) | 0 |
+| 50 | 0.2378 (0.2333–0.2423) | 1.0000 (0.9985–1.0000) | −219 |
+| 100 | 0.2387 (0.2340–0.2429) | 0.9965 (0.9917–0.9977) | −163 |
+| 200 | 0.2432 (0.2378–0.2467) | 0.9768 (0.9753–0.9812) | +1,772 |
+| 300 | 0.2479 (0.2422–0.2524) | 0.9506 (0.9459–0.9578) | +4,209 |
+| **400 (configured default)** | **0.2543 (0.2476–0.2569)** | **0.9155 (0.9111–0.9232)** | **+12,923** |
+| 600 | 0.2641 (0.2571–0.2675) | 0.8446 (0.8301–0.8513) | +44,403 |
+| 800 | 0.2724 (0.2672–0.2775) | 0.7726 (0.7655–0.7812) | +86,000 |
+| 1,000 | 0.2791 (0.2700–0.2849) | 0.7036 (0.6957–0.7126) | +152,071 |
+| 1,500 | 0.2915 (0.2848–0.2979) | 0.5613 (0.5513–0.5715) | +390,402 |
+| 2,000 | 0.2991 (0.2949–0.3080) | 0.4521 (0.4380–0.4744) | +669,547 |
+| 3,000 | 0.3142 (0.3074–0.3278) | 0.3123 (0.2999–0.3443) | +1,384,613 |
+| 4,000 | 0.3233 (0.3137–0.3375) | 0.2339 (0.2207–0.2558) | +2,168,360 |
+| 6,000 | 0.3369 (0.3264–0.3644) | 0.1540 (0.1408–0.1759) | +3,893,929 |
+| 8,000 | 0.3467 (0.3346–0.3780) | 0.1252 (0.1100–0.1369) | +5,722,304 |
+| 10,000 | 0.3599 (0.3435–0.3868) | 0.1069 (0.0981–0.1192) | +7,573,243 |
+
+Precision rises and recall falls monotonically as cost rises — a higher
+cost raises the per-row breakeven `p_win` required to contest
+(`expected_value = p_win * amount − cost > 0`), so the policy contests a
+narrower, higher-precision, lower-recall slice as cost grows. Full detail:
+`DECISIONS.md`'s 2026-09-01 "Policy precision/recall added to the cost
+sweep" entry.
+
+<details>
+<summary>Superseded Phase 2 placeholder (pre-policy-engine; kept for
+history, not current)</summary>
+
 Precision/recall, **at the placeholder threshold = train-split label
-prevalence (median 0.2543, IQR 0.2522–0.2559)** — this is *not* the real
-policy operating point (the policy engine's expected-value rule is), only
-a documented stand-in so Phase 2 had some precision/recall to report before
-the policy engine existed:
+prevalence (median 0.2543, IQR 0.2522–0.2559)** — from before the policy
+engine existed, when there was no expected-value rule to report
+precision/recall against:
 
 | Metric | Median | IQR |
 |---|---|---|
 | Precision | 0.3537 | 0.3490–0.3606 |
 | Recall | 0.6954 | 0.6771–0.7037 |
 
-**Business metrics**, at the operating point the system actually uses —
-`PolicyConfig` defaults (`representment_cost_inr=400.0`,
+This threshold's median (0.2543) visually matches the configured-cost
+(₹400) policy precision median above, also 0.2543 — checked per-seed across
+the same 20 seeds and confirmed **coincidental**: the two quantities differ
+at every individual seed (they're computed from disjoint splits by
+different code paths); only their medians happen to sit near this
+generator's overall label prevalence. See `DECISIONS.md`'s 2026-09-01 entry
+for the full per-seed A−B spread.
+
+</details>
+
+**Business metrics**, at `PolicyConfig`'s configured default
+(`representment_cost_inr=400.0`,
 `low_confidence_band=(0.45, 0.55)`), rupees recovered per 1,000 disputes,
 median test-split size n=3,609.5:
 
@@ -170,7 +220,7 @@ rupees at stake, close to their 5.5% share of dispute count, not wildly
 disproportionate at this confidence band's width.
 
 **False-positive / false-negative cost** (checklist item 6), same run,
-same operating point:
+same configured default:
 
 | | Count / 1,000 | Cost (INR / 1,000 disputes) |
 |---|---|---|

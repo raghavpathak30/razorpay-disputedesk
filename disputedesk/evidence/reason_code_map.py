@@ -36,7 +36,7 @@ _CNP_FRAUD_EVIDENCE: tuple[str, ...] = (
 REQUIRED_EVIDENCE_BY_REASON_CODE: dict[str, tuple[str, ...]] = {
     "MC_4837": _CNP_FRAUD_EVIDENCE,  # No Cardholder Authorization
     "MC_4840": _CNP_FRAUD_EVIDENCE,  # Fraudulent Processing of Transactions
-    "VISA_83": _CNP_FRAUD_EVIDENCE,  # Fraud-Card Absent Environment
+    "VISA_10_4": _CNP_FRAUD_EVIDENCE,  # Other Fraud - Card-Absent (supersedes legacy Visa 83)
     "AMEX_FR2": _CNP_FRAUD_EVIDENCE,  # Fraudulent Transaction
 }
 

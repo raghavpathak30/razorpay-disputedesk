@@ -62,3 +62,44 @@ def test_baseline_a_recovered_is_non_increasing_in_cost():
     _per_seed, summary = _run()
     sorted_by_cost = summary.sort_values("representment_cost_inr")
     assert sorted_by_cost["baseline_a_median"].is_monotonic_decreasing
+
+
+def test_precision_is_non_decreasing_in_cost():
+    # A higher cost raises the per-row breakeven p_win required to contest
+    # (expected_value = p_win * amount - cost > 0), so the policy contests a
+    # narrower, higher-confidence slice as cost rises - precision should not
+    # fall.
+    _per_seed, summary = _run()
+    sorted_by_cost = summary.sort_values("representment_cost_inr")
+    assert sorted_by_cost["precision_median"].is_monotonic_increasing
+
+
+def test_recall_is_non_increasing_in_cost():
+    # The same narrowing slice means recall (of the winnable disputes that
+    # get contested) should not rise as cost rises.
+    _per_seed, summary = _run()
+    sorted_by_cost = summary.sort_values("representment_cost_inr")
+    assert sorted_by_cost["recall_median"].is_monotonic_decreasing
+
+
+def test_precision_recall_in_unit_range():
+    per_seed, _summary = _run()
+    assert per_seed["policy_precision"].between(0, 1).all()
+    assert per_seed["policy_recall"].between(0, 1).all()
+
+
+def test_escalate_rate_is_invariant_to_cost_per_seed():
+    # decide()'s low-confidence check runs before the cost-dependent
+    # expected_value branch and never reads cost or amount, so which rows
+    # escalate is fixed by p_win and low_confidence_band alone - both held
+    # fixed across this sweep. The escalate rate should therefore be
+    # identical across every swept cost, within one seed.
+    per_seed, _summary = _run()
+    for seed in CI_SEEDS:
+        rates = per_seed.loc[per_seed["seed"] == seed, "policy_escalate_rate"]
+        assert rates.nunique() == 1
+
+
+def test_escalate_rate_in_unit_range():
+    per_seed, _summary = _run()
+    assert per_seed["policy_escalate_rate"].between(0, 1).all()

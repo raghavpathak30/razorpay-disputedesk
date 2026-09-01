@@ -7,10 +7,24 @@ Run as `python -m eval.run_cost_sensitivity`.
 import argparse
 from pathlib import Path
 
+import pandas as pd
+
 from disputedesk.generator.config import GeneratorConfig
 from disputedesk.model.config import ModelConfig
 from disputedesk.policy.config import REPRESENTMENT_COST_INR
 from eval.cost_sensitivity import fixed_seed_set, summarize_sweep, sweep_representment_cost
+
+
+def _fmt_median_iqr(summary: pd.DataFrame, prefix: str) -> pd.Series:
+    return (
+        summary[f"{prefix}_median"].map("{:.4f}".format)
+        + " (IQR "
+        + summary[f"{prefix}_q25"].map("{:.4f}".format)
+        + "-"
+        + summary[f"{prefix}_q75"].map("{:.4f}".format)
+        + ")"
+    )
+
 
 DEFAULT_COSTS = [
     0,
@@ -57,9 +71,31 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"seeds: {seeds[0]}..{seeds[-1]} (n={len(seeds)}), n_rows per seed: {args.n_rows}")
     print(f"configured representment_cost_inr (unchanged): {REPRESENTMENT_COST_INR}")
-    print("escalate_mode: naive_contest (fair vs. baseline A - see eval.business_metrics)")
+    print(
+        "escalate_mode: naive_contest (fair vs. baseline A - see eval.business_metrics); "
+        "same mode used to fold ESCALATE into the positive prediction for "
+        "precision/recall below (see eval.cost_sensitivity._predicted_positive)"
+    )
     print()
     print(summary.to_string(index=False, float_format=lambda x: f"{x:,.1f}"))
+    print()
+
+    table = pd.DataFrame(
+        {
+            "representment_cost_inr": summary["representment_cost_inr"],
+            "precision": _fmt_median_iqr(summary, "precision"),
+            "recall": _fmt_median_iqr(summary, "recall"),
+            "escalate_rate": _fmt_median_iqr(summary, "escalate_rate"),
+            "policy_advantage_recovered_per_1000_inr": summary["policy_advantage_median"].map(
+                "{:,.1f}".format
+            ),
+        }
+    )
+    print(
+        "cost, precision, recall, escalate rate, and policy's rupees-recovered "
+        "advantage over baseline A:"
+    )
+    print(table.to_string(index=False))
     print()
 
     crossover = summary[summary["policy_advantage_median"] <= 0]

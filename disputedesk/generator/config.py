@@ -150,7 +150,7 @@ class GeneratorConfig(BaseModel):
     # other latent gets. Modeled as issuer misclassification: with this probability
     # the recorded code differs from the true reason_subtype (Guess, not derived).
     reason_code_misclassification_prob: float = 0.10  # (implementation) §1 L6 revision, defect 2
-    reason_codes: tuple[str, ...] = ("MC_4837", "MC_4840", "VISA_83", "AMEX_FR2")
+    reason_codes: tuple[str, ...] = ("MC_4837", "MC_4840", "VISA_10_4", "AMEX_FR2")
 
     card_networks: tuple[str, ...] = (
         "Visa",
