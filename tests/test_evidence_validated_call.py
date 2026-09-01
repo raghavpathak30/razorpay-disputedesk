@@ -8,7 +8,7 @@ import json
 from pydantic import BaseModel
 
 from disputedesk.evidence.llm import FakeLLMClient
-from disputedesk.evidence.validated_call import call_llm_and_validate
+from disputedesk.evidence.validated_call import call_llm_and_validate, validate_or_repair
 
 
 class _ToySchema(BaseModel):
@@ -19,6 +19,23 @@ def test_valid_first_response_is_returned_without_a_repair_call():
     client = FakeLLMClient(responses=[json.dumps({"value": 1})])
     result = call_llm_and_validate(client, "prompt", _ToySchema)
     assert result == _ToySchema(value=1)
+    assert client.call_count == 1
+
+
+def test_validate_or_repair_makes_no_call_at_all_when_the_given_response_is_valid():
+    # The caller already has a completion (e.g. one it fetched itself, or
+    # for logging) - validating it must not cost a second API call for the
+    # same logical request.
+    client = FakeLLMClient(responses=["should never be used"])
+    result = validate_or_repair(client, "prompt", json.dumps({"value": 7}), _ToySchema)
+    assert result == _ToySchema(value=7)
+    assert client.call_count == 0
+
+
+def test_validate_or_repair_makes_exactly_one_call_to_repair_an_invalid_given_response():
+    client = FakeLLMClient(responses=[json.dumps({"value": 8})])
+    result = validate_or_repair(client, "prompt", "not json", _ToySchema)
+    assert result == _ToySchema(value=8)
     assert client.call_count == 1
 
 

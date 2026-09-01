@@ -9,6 +9,8 @@ REQUIRED_VARS = {
     "RAZORPAY_KEY_ID": "rzp_test_id",
     "RAZORPAY_KEY_SECRET": "rzp_test_secret",
     "LLM_API_KEY": "llm_test_key",
+    "LLM_API_URL": "https://api.groq.com/openai/v1/chat/completions",
+    "LLM_MODEL": "openai/gpt-oss-20b",
     "DATABASE_URL": "sqlite:///./test.db",
 }
 
@@ -42,4 +44,6 @@ def test_loads_correctly_when_all_variables_present(monkeypatch):
     assert settings.razorpay_key_id == REQUIRED_VARS["RAZORPAY_KEY_ID"]
     assert settings.razorpay_key_secret == REQUIRED_VARS["RAZORPAY_KEY_SECRET"]
     assert settings.llm_api_key == REQUIRED_VARS["LLM_API_KEY"]
+    assert settings.llm_api_url == REQUIRED_VARS["LLM_API_URL"]
+    assert settings.llm_model == REQUIRED_VARS["LLM_MODEL"]
     assert settings.database_url == REQUIRED_VARS["DATABASE_URL"]

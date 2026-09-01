@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     razorpay_key_id: str
     razorpay_key_secret: str
     llm_api_key: str
+    llm_api_url: str
+    llm_model: str
     database_url: str
 
 

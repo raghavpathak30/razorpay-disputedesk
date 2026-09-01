@@ -30,6 +30,16 @@ def test_valid_llm_response_is_used_directly():
     assert result.normalized.tone == "polite"
 
 
+def test_one_normalization_costs_exactly_one_call_when_the_first_response_validates():
+    # A live-call check made against this function separately called
+    # `.complete()` directly and then this function again, doubling the API
+    # requests for one logical normalisation - this pins the fix.
+    client = FakeLLMClient(responses=[VALID_RESPONSE])
+    normalize_communication_log("I don't recognize this charge.", client)
+
+    assert client.call_count == 1
+
+
 def test_repair_succeeds_after_one_bad_response():
     client = FakeLLMClient(responses=["not json", VALID_RESPONSE])
     result = normalize_communication_log("I don't recognize this charge.", client)

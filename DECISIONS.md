@@ -306,3 +306,222 @@ own contest/accept/escalate decision, which is identical across all three
 rows of the table above).
 
 **Status:** CONFIRMED-RAN
+
+## 2026-08-31 — LLM provider: Groq
+
+**Decision:** The real `LLMClient` implementation (`disputedesk/evidence/llm.py`)
+calls Groq's OpenAI-compatible chat completions endpoint
+(`https://api.groq.com/openai/v1/chat/completions`), configured with model
+`openai/gpt-oss-20b`. Endpoint, model, and API key are all read from
+`disputedesk.config.get_settings()` (`LLM_API_URL`, `LLM_MODEL`,
+`LLM_API_KEY` in `.env`/`.env.example`) - not hardcoded as class constants,
+per the Phase 0 rule that `config.py` is the only place that reads
+`os.environ`. Supersedes the earlier `AnthropicHttpLLMClient` from the
+2026-08-31 Phase 3 session, which was never wired to a real key or called
+live.
+
+**Why (provider):** Groq was chosen by the requester; not re-litigated here.
+
+**Why (model - `openai/gpt-oss-20b`, not a frontier model):** SPEC.md §2
+scopes the LLM to exactly two jobs - drafting a short `explanation_letter`
+and normalising messy free text into typed fields (`NormalizedCommunicationLog`,
+`ExplanationLetterOutput` in `disputedesk/evidence/schemas.py`). Neither task
+needs multi-step reasoning, long-context synthesis, or broad world knowledge;
+both are short, schema-constrained, single-turn completions where a small
+model is plausibly sufficient. Reaching for the largest available model here
+would be exactly the "forcing an LLM/unnecessary tech" failure mode the AI
+Judgment criterion penalises (echoing the same reasoning already recorded in
+the "LLM authority boundary" entry above, applied to model *size* instead of
+LLM *scope*) - the smallest model that plausibly clears the bar is the
+defensible choice, not the largest one available.
+
+Verified against `console.groq.com/docs/models` and
+`console.groq.com/docs/deprecations` on 2026-08-31 (today), not recalled from
+training data (CLAUDE.md: do not invent a citation):
+- `llama-3.1-8b-instant` (8B, the obvious "smallest" candidate) is
+  deprecated for free/developer-tier usage, with a shutdown date of
+  2026-08-16 - already past as of this decision. Groq's own deprecation
+  notice recommends migrating to `openai/gpt-oss-20b`.
+- `openai/gpt-oss-20b` is listed under "Production Models" (not "Preview")
+  on the current models page: 131,072-token context, 20B total parameters
+  but only 3.6B active per forward pass (mixture-of-experts), with both JSON
+  Object Mode and JSON Schema Mode support - directly useful for
+  `evidence/`'s schema-constrained outputs. It is the smaller of the two
+  production GPT-OSS models (the other is 120B) and the model Groq itself
+  points free/developer users toward as the small-model default going
+  forward.
+- Not chosen: `llama-3.3-70b-versatile` (70B, production) and
+  `qwen/qwen3-32b` (32B, availability/tier unclear at verification time) -
+  both larger than `gpt-oss-20b` with no identified requirement in these two
+  tasks that `gpt-oss-20b` couldn't plausibly meet; `gemma2-9b-it` was
+  returned by one lookup as "still active" and by another as carrying an
+  October-2025 deprecation date already in the past relative to today - the
+  two sources disagreed, so it was not selected without a resolving,
+  citable source.
+
+**Caveats:** "Plausibly handles" both tasks is a judgment based on the
+model's stated capabilities (JSON mode, instruction-following at this size
+class), not yet an empirical eval on this project's own prompts - the one
+real call in this session (see the entry immediately below) checks that the
+API contract works, not output quality at scale. If `evidence/`'s repair-then-
+fallback behavior (SPEC.md §7) fires often in real use, that is a signal to
+revisit this choice, not a reason to silently swap models without a new
+dated entry here.
+
+**Status:** DECIDED
+
+## 2026-08-31 — Groq live call, verified
+
+**Result:** `GroqHttpLLMClient` called against the real
+`https://api.groq.com/openai/v1/chat/completions` endpoint with
+`LLM_MODEL=openai/gpt-oss-20b`, using an already-exported `GROQ_API_KEY`
+from the shell environment (never written to a file or committed). Two live
+requests: `client.complete(prompt)` directly, then a second completion of
+the same prompt via `call_llm_and_validate(...)` (a fresh, non-deterministic
+call, not a reuse of the first) using the real
+`normalize_comms_log_v1` prompt against a sample customer message. Both
+requests returned HTTP 200; `response.raise_for_status()` did not raise;
+`body["choices"][0]["message"]["content"]` was present and non-empty on
+both. The first completion's JSON parsed and validated against
+`NormalizedCommunicationLog` on the **first attempt** - no repair call was
+needed - confirming the auth header, endpoint path, request body shape, and
+response-parsing code (`disputedesk/evidence/llm.py`,
+`disputedesk/evidence/validated_call.py`) all work end to end against the
+real provider, not just against `FakeLLMClient`.
+
+Sample output (first completion, verbatim):
+```json
+{
+  "claims_unauthorized_transaction": true,
+  "mentions_prior_bank_contact": true,
+  "mentions_shared_card_access": false,
+  "mentions_travel": false,
+  "tone": "polite",
+  "is_substantive": true,
+  "summary": "The customer claims an unknown charge, has already contacted their bank, and requests a refund."
+}
+```
+
+**How:** ad hoc interactive session, not a committed script - constructed
+`Settings` from environment variables directly (`LLM_API_KEY` set from the
+shell's `GROQ_API_KEY`, `LLM_API_URL`/`LLM_MODEL` set explicitly,
+`RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/`DATABASE_URL` set to dummy values
+since `Settings` requires them all), then called `GroqHttpLLMClient()`
+directly. No `.env` file was created; the key was never printed or logged.
+
+**Caveats:** this confirms the API *contract* (auth, endpoint, request/response
+shape, one successful schema validation) works, not output quality across
+the range of real dispute messages this system will see, and not the repair
+path (SPEC.md §7) against a real malformed response - `FakeLLMClient`
+already covers that deterministically in `tests/test_evidence_*.py`, and
+should keep doing so; this was a one-time connectivity/contract check, not a
+replacement for those tests.
+
+**Status:** CONFIRMED-RAN
+
+## 2026-09-01 — LLM normalisation quality vs. TF-IDF baseline, measured
+
+**The LLM normalisation does not beat the TF-IDF baseline. It loses, clearly.**
+
+**Result:** `eval.llm_normalization_quality`, live Groq API
+(`openai/gpt-oss-20b`), n=60 synthetic disputes (seed=0, `GeneratorConfig()`
+defaults), `customer_communication_log` -> `NormalizedCommunicationLog` via
+the real `normalize_communication_log` (prompt
+`disputedesk/evidence/prompts/normalize_comms_log_v1.txt`, unmodified).
+7 typed fields (`eval.llm_normalization_quality.FEATURE_COLUMNS` -
+`claims_unauthorized_transaction`, `mentions_prior_bank_contact`,
+`mentions_shared_card_access`, `mentions_travel`, `is_substantive`,
+`tone_polite`, `tone_terse`; the free-text `summary` field excluded, since
+the comparison is about the *typed* fields specifically) fed to a logistic
+regression under 5-fold stratified CV, ROC AUC per fold - the same
+downstream-classifier methodology as the recorded TF-IDF baseline, so the
+comparison isolates the feature-extraction step:
+
+- true_fraud prevalence in the sample: 0.317 (19 of 60)
+- `human_review_required` rate: **0.0** - every one of the 60 completions
+  validated against `NormalizedCommunicationLog` on the first LLM call, no
+  repair or fallback needed anywhere in the sample. The extraction is
+  reliable in *format*; this measurement is about whether it is predictive
+  in *content*.
+- fold AUCs: [0.5938, 0.3594, 0.3281, 0.2500, 0.5741]
+- **mean AUC: 0.4211 (std 0.1378)** - below 0.5 (worse than a coin flip) on
+  3 of 5 folds
+- **TF-IDF + logistic regression baseline (recorded, 2026-08-31 "Generator
+  calibration" entry, 5-fold CV): 0.6371**
+- **verdict: LLM normalisation does NOT beat the baseline** - 0.4211 vs.
+  0.6371, a wide margin, not a close call decided by noise alone (though see
+  Caveats on the sample size).
+
+**Why (diagnostic, not a fix - nothing was changed based on this):**
+per-class means of the 7 typed fields are nearly identical between
+`true_fraud=True` and `true_fraud=False`:
+
+| field | true_fraud=False | true_fraud=True |
+|---|---|---|
+| claims_unauthorized_transaction | 0.976 | 0.947 |
+| mentions_prior_bank_contact | 0.195 | 0.211 |
+| mentions_shared_card_access | 0.146 | 0.053 |
+| mentions_travel | 0.146 | 0.105 |
+| is_substantive | 0.976 | 0.947 |
+| tone_polite | 0.805 | 0.684 |
+| tone_terse | 0.098 | 0.105 |
+
+Two fields (`claims_unauthorized_transaction`, `is_substantive`) sit near
+1.0 for both classes - almost every generated message reads as a real,
+substantive unauthorized-charge claim regardless of `true_fraud`, so a
+boolean extraction of "did they claim unauthorized use" has almost no
+variance left to correlate with anything. This is consistent with
+`disputedesk/generator/comms.py`'s own documented design (session-2 fix,
+GENERATOR.md §3): the four opening/claim phrase pools are shared across both
+classes with deliberately mild weight differences ("max ratio 1.5:1") so no
+fixed string is class-exclusive - the differentiating signal is a subtle
+*frequency tilt* across near-synonymous phrasings, exactly the kind of
+signal a bag-of-words TF-IDF vectorizer preserves as continuous per-token
+weights and a coarse yes/no LLM extraction collapses away. `tone_polite`
+carries the largest per-class gap (0.805 vs. 0.684) but is still a weak,
+noisy single feature at this sample size.
+
+**How:** `python -m eval.run_llm_normalization_quality --n-rows 60 --seed 0
+--sleep-seconds 7.0 --out-dir data/eval`, with `LLM_API_KEY` set from an
+already-exported `GROQ_API_KEY` (never written to a file). Writes
+`data/eval/llm_normalization_quality_sample.csv`. An earlier attempt at
+n=80/sleep=4.0 hit `HTTP 429` (the per-minute token budget for
+`openai/gpt-oss-20b`'s free tier is consumed faster than a naive
+prompt-length estimate suggested - a live probe showed a single
+normalisation call costs ~540 total tokens including ~150 *reasoning*
+tokens the visible completion doesn't show, and the provider's rate-limit
+bucket accounting drains faster than that alone would imply). Fixed by
+adding 429-aware retry with backoff and slower pacing to
+`eval/llm_normalization_quality.py` and `eval/run_llm_normalization_quality.py`
+(tested with `tests/test_eval_llm_normalization_quality.py`'s
+`_FlakyThenValidLLMClient`, an in-memory fake - no network in any test) -
+this changed request pacing and retry behaviour only, never the prompt,
+schema, feature encoding, or CV methodology, all of which were written and
+frozen (per this module's own docstring) before either run.
+
+**Sample size, why 60:** free-tier limits for `openai/gpt-oss-20b`
+(retrieved from `console.groq.com/docs/rate-limits` on 2026-08-31): 30 RPM /
+1,000 RPD / 8,000 TPM / 200,000 TPD. At the observed ~540-830 tokens
+consumed per call (bucket accounting vs. reported `usage.total_tokens`
+disagree somewhat, likely because the provider reserves against requested
+`max_tokens` rather than actual usage), 60 requests with no repairs used
+roughly 32,000-50,000 tokens total - comfortably inside the daily 200,000
+budget and the 60-of-1,000 daily request budget, with 7-second pacing
+keeping the per-minute rate well under the 8,000 TPM ceiling.
+
+**Caveats:** n=60 (19 positive) is small - the 5-fold CV folds hold only
+~12 rows (~4 positive) each, and the fold-to-fold spread (0.25 to 0.59) is
+wide; a different seed would very plausibly move the mean AUC by more than
+a few points. This was a deliberate one-shot, free-tier-bounded sample, not
+a multi-seed measurement (CLAUDE.md invariant 3 governs *headline* numbers
+about the system's own performance; this is a single diagnostic comparison
+against an already-recorded baseline, following the same "out-of-band
+sanity check, one run" precedent the TF-IDF number itself was produced
+under). The gap between 0.4211 and 0.6371, however, is large enough (and
+the diagnostic table above explains a real structural reason for it) that
+it should not be read as "too close to call" - it is a genuine result, not
+noise dressed up as one. Per this session's explicit instruction, no prompt,
+schema, or feature-encoding change was made in response to this number, and
+none should be made without a new dated entry here explaining why.
+
+**Status:** CONFIRMED-RAN

@@ -46,30 +46,32 @@ class FakeLLMClient:
         return self._call_count
 
 
-class AnthropicHttpLLMClient:
-    """Real implementation: a plain `httpx` call to Anthropic's Messages API,
-    using `httpx` (already a project dependency) rather than adding an SDK
-    dependency without asking (CLAUDE.md). ASSUMPTION: the model id default
-    below is a plausible current choice, not confirmed against Anthropic's
-    live model list at deploy time - callers needing a specific model should
-    pass `model` explicitly.
+class GroqHttpLLMClient:
+    """Real implementation: a plain `httpx` call to Groq's OpenAI-compatible
+    chat completions endpoint, using `httpx` (already a project dependency)
+    rather than adding an SDK dependency without asking (CLAUDE.md). Every
+    provider detail - endpoint, model, key - is read from `get_settings()`
+    (`LLM_API_URL`, `LLM_MODEL`, `LLM_API_KEY`), never hardcoded here: the
+    Phase 0 rule is that `disputedesk/config.py` is the only place that reads
+    `os.environ`, and provider configuration is exactly the kind of thing
+    that rule exists to keep out of a class constant.
+
+    See the 2026-08-31 "LLM provider: Groq" DECISIONS.md entry for which
+    model is configured in `.env.example` and why.
     """
 
-    _API_URL = "https://api.anthropic.com/v1/messages"
-    _ANTHROPIC_VERSION = "2023-06-01"
-    _DEFAULT_MODEL = "claude-3-5-haiku-20241022"
-
-    def __init__(self, model: str | None = None, timeout_seconds: float = 30.0):
-        self._api_key = get_settings().llm_api_key
-        self._model = model or self._DEFAULT_MODEL
+    def __init__(self, timeout_seconds: float = 30.0):
+        settings = get_settings()
+        self._api_url = settings.llm_api_url
+        self._model = settings.llm_model
+        self._api_key = settings.llm_api_key
         self._timeout_seconds = timeout_seconds
 
     def complete(self, prompt: str) -> str:
         response = httpx.post(
-            self._API_URL,
+            self._api_url,
             headers={
-                "x-api-key": self._api_key,
-                "anthropic-version": self._ANTHROPIC_VERSION,
+                "Authorization": f"Bearer {self._api_key}",
                 "content-type": "application/json",
             },
             json={
@@ -81,4 +83,4 @@ class AnthropicHttpLLMClient:
         )
         response.raise_for_status()
         body = response.json()
-        return "".join(block["text"] for block in body["content"] if block["type"] == "text")
+        return body["choices"][0]["message"]["content"]
