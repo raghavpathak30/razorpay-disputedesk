@@ -627,3 +627,103 @@ rather than literally severing a network connection mid-run, since the
 demo has no live network call to sever by design.
 
 **Status:** DECIDED
+
+## 2026-09-01 — Phase 5 freeze: refactor, security review, docs
+
+**Decision/correction:** the 2026-08-31 "Python version" entry above states
+"CI matrix runs 3.11 and 3.13" - `.github/workflows/ci.yml` as it actually
+exists only runs a single `python-version: "3.11"` job, not a matrix. Left
+uncorrected in the code during this freeze (`.github/workflows/ci.yml` is
+not one of the files this session's refactor/security scope covers), noted
+here per CLAUDE.md's rule against letting a recorded claim silently stay
+wrong. The dev `.venv` this project has actually been developed and tested
+under is 3.13, so both versions are exercised locally even though CI itself
+only checks one.
+
+**Refactor pass, what was removed:** two genuinely dead code paths, found
+by checking every non-test function/class definition against the rest of
+the codebase for any reference outside its own definition -
+`disputedesk.audit.db.session_scope` (a context-manager convenience never
+adopted by any caller - the webhook, the demo script, and every test all
+construct a session via `make_session_factory` directly instead) and
+`eval.business_metrics.BusinessOutcome` (a dataclass defined and never
+instantiated anywhere). No file exceeded CLAUDE.md's 300-line limit (max
+was 277, `disputedesk/cli/demo.py`); three functions exceeded the 50-line
+limit (`disputedesk.audit.log.record_decision`,
+`eval.business_metrics.build_business_row`,
+`eval.run_business_harness.main`) and were brought under it - the first by
+trimming its docstring (its length was documentation, not branching logic),
+the other two by extracting a genuinely separable piece each
+(`_cost_and_escalate_summary`, `_print_report`) rather than restructuring
+working logic. `eval.business_metrics`'s per-seed regression test
+(`tests/test_eval_business_harness_regression.py`) and the full suite both
+still pass unchanged after the split, confirming the extraction didn't
+change any computed value.
+
+**Security review, findings and fixes:** `disputedesk/api/schemas.py`'s
+`DisputeEntity` validated most fields (`amount`, `prior_order_count`, etc.)
+but left `id`, `payment_id`, `reason_code`, and `customer_communication_log`
+as unconstrained `str` - PHASES.md Phase 4 item 5 and this session's brief
+both ask for validation on every field, not just `status`. Three real gaps,
+fixed:
+1. `id`/`payment_id` are interpolated directly into the Razorpay API
+   request path (`disputedesk/client/razorpay.py`'s
+   `f"/disputes/{dispute_id}/..."`, string interpolation, not a URL-safe
+   join) - an unconstrained value could contain `/`, `?`, or other
+   URL-structuring characters and alter the request target. Fixed with a
+   `pattern=r"^[A-Za-z0-9_]{1,64}$"` constraint matching the charset
+   Razorpay's own ids actually use.
+2. `reason_code` had no constraint, but
+   `disputedesk/evidence/reason_code_map.py::required_evidence_types`
+   raises `KeyError` on anything outside the four known codes - a
+   `CONTEST`-bound dispute with an unrecognized code would have surfaced as
+   an unhandled 500, not a 422 rejected at the boundary. Fixed by
+   constraining `reason_code` to `Literal[*REASON_CODES]` (the same four
+   codes `disputedesk/features/build.py` already treats as the known
+   vocabulary).
+3. `customer_communication_log` had no length bound, letting an oversized
+   payload inflate LLM token cost/latency without limit. Fixed with
+   `max_length=5000` - a cost/DoS bound, not a correctness one.
+
+Confirmed clean, not fixed because nothing was broken: no secret in any
+tracked file or in git history (`git log --all -p` grepped for
+key-shaped strings); `os.environ`/`os.getenv` read only inside
+`disputedesk/config.py` (grepped across the whole tree); unvalidated LLM
+output never reaches the Razorpay client at any point -
+`disputedesk/api/pipeline.py` only ever reads
+`packet.explanation_letter.letter_text`, a field that exists only after
+`disputedesk/evidence/validated_call.py`'s schema validation or the
+deterministic template fallback, never a raw completion.
+
+**Known gap, deliberately not fixed in this freeze:** the webhook has no
+signature/HMAC verification (`X-Razorpay-Signature` or equivalent) - real
+Razorpay webhook documentation for the dispute-event signature scheme could
+not be located (same "two lookups 404'd" gap the 2026-09-01 "Phase 4" entry
+above already notes for the payload envelope itself). Adding verification
+now would be new scope this freeze's brief explicitly excludes ("no new
+features" - PHASES.md Phase 5), not a "fix what's broken" correction to
+existing behavior, so it's recorded here as a stated limitation
+(`ARCHITECTURE.md`'s "Known gaps" section) rather than built.
+
+**Demo fixes (two, explicitly permitted this freeze):**
+`disputedesk/cli/demo.py` previously replayed one fixture dispute under
+different `id`s for every step, so every step's displayed `p_win` was the
+identical 0.2658 - a viewer had no way to see the model responding to
+input. Added `WEAK_EVIDENCE_EVENT`, a deliberately opposite feature profile
+(weak AVS/CVV, unrecognized device, no delivery proof, filed fast, no order
+history, low amount), scored at `p_win=0.0756` and decision=`accept` by the
+same demo model that scores the original fixture at `p_win=0.2658` and
+decision=`contest` - shown as a new step 3, contrasted explicitly against
+step 1. Also silenced the `StarletteDeprecationWarning` that otherwise
+prints above the demo's output (starlette's `httpx2`-not-installed warning,
+harmless but visible in a pitch-video recording) by filtering that specific
+warning class around the one import that triggers it, not by installing a
+new dependency or broadening the filter to other warnings.
+
+**How (verification):** `ruff check .` and `pytest` (190 tests, up from 184
+- four new regression tests for the schema constraints above, in
+`tests/test_api_schemas.py`) both pass after every change in this entry.
+`python -m disputedesk.cli.demo` re-run and its full output re-read after
+the demo fixes.
+
+**Status:** DECIDED
