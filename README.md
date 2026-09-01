@@ -260,25 +260,45 @@ factor, and every parameter guess with its own revision history.
 
 ## Running the demo from a clean clone
 
-Requires Python 3.11+ and no network access, secrets, or `.env` file — the
-demo trains its own model in memory from the synthetic generator and fakes
-both the LLM and Razorpay API clients.
+The demo has two segments, printed under their own headers, with different
+reproducibility guarantees:
+
+- **Segment A — deterministic.** Requires Python 3.11+ and no network
+  access, secrets, or `.env` file — it trains its own model in memory from
+  the synthetic generator and fakes both the LLM and Razorpay API clients.
+  **This segment's stdout is byte-identical across cold clones**: same seed,
+  same fixtures, no LLM call, no wall-clock timestamp in anything printed.
+  This is the segment any reproducibility check should run — pass
+  `--deterministic-only` to run only it.
+- **Segment B — LLM output, not reproducible.** Drafts the explanation
+  letter for two disputes chosen to differ on both the fraud reason code and
+  evidence availability (one with the full required evidence set, one with
+  a documented gap), using a real `GroqHttpLLMClient` call, and prints the
+  letters verbatim. Needs a populated `.env` (see `.env.example`) and
+  network access to the configured `LLM_API_URL`; the same underlying
+  live-Groq-model wording variance the "LLM authority boundary" section
+  above measured applies here too, so a second run can print different text
+  for the same dispute. Degrades to a clear skip message, not a crash, if
+  `.env` isn't configured.
 
 ```bash
 git clone <this repo> && cd disputedesk  # or your clone's directory name
 pip install -e ".[dev]"
-python -m disputedesk.cli.demo
+python -m disputedesk.cli.demo                     # both segments
+python -m disputedesk.cli.demo --deterministic-only # Segment A only, offline
 ```
 
-This replays two dispute events with visibly different evidence profiles
-through the real FastAPI webhook route, the real policy engine, and the
-real evidence assembler end to end — one scores high enough to contest, the
-other scores low enough to accept, so `P(win)` and the decision can be seen
-responding to input, not repeating a fixed value. It also demonstrates
-idempotent replay, webhook payload rejection, and both `SPEC.md` §7 failure
-paths live: an LLM that returns invalid output twice in a row (repair
-fails, degrades to a deterministic template, flags for human review) and a
-Razorpay API call that times out once and then recovers via the shared
+Segment A replays two dispute events with visibly different evidence
+profiles through the real FastAPI webhook route, the real policy engine,
+and the real evidence assembler end to end — one scores high enough to
+contest, the other scores low enough to accept, so `P(win)` and the
+decision can be seen responding to input, not repeating a fixed value. It
+also demonstrates idempotent replay, webhook payload rejection, and all
+three `SPEC.md` §7 / demo failure paths live: an LLM that returns invalid
+output twice in a row (repair fails, degrades to a deterministic template,
+flags for human review), a Razorpay API call that times out once and then
+recovers, and a Razorpay API call that receives an HTTP 429 with
+`Retry-After` and recovers — both retry paths via the same shared
 exponential-backoff retry helper. Nothing crashes at any step.
 
 Pass `--db-path <file>` instead of the default in-memory database to

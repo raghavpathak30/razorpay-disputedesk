@@ -727,3 +727,427 @@ new dependency or broadening the filter to other warnings.
 the demo fixes.
 
 **Status:** DECIDED
+
+## 2026-09-01 — Demo: third failure path (429 + Retry-After), real RazorpayHttpClient
+
+**Decision:** Added a third demo step (`disputedesk/cli/demo.py`'s
+`demo_failure_path_429_retry_after`, printed as "7. Failure path 3") showing
+a real HTTP 429 with a `Retry-After` header recovering through the existing
+`disputedesk.retry.call_with_backoff` helper - no new retry logic. Unlike
+the existing timeout demo (step 6, which calls `call_with_backoff` directly
+against a synthetic flaky function), this step runs the real
+`RazorpayHttpClient` through the real webhook route, so it demonstrates
+actual recovery: dispute filed, `api_outcomes` row written `success`. The
+429 is injected as a transport-layer fixture (`httpx.MockTransport`, routed
+in via a temporary `mock.patch("httpx.request", ...)` - the same pattern
+`tests/test_client_razorpay.py` already uses), never by monkeypatching
+`call_with_backoff`'s internals.
+
+**Seam added (smallest found; `call_with_backoff` itself needed none - it
+already takes `sleep_fn`):** `RazorpayHttpClient.__init__` gained a
+`sleep_fn: Callable[[float], None] = time.sleep` parameter, threaded
+straight into its existing `call_with_backoff(...)` call. Real callers never
+pass it (production behaviour unchanged); the demo uses it to print the
+honoured `Retry-After` value `call_with_backoff` actually received and then
+sleep a compressed, labelled fraction of it, so the run stays fast and the
+printed values stay real and deterministic (no wall-clock timestamps, no
+jitter). Covered by
+`tests/test_client_razorpay.py::test_429_retry_after_reaches_injected_sleep_fn`.
+
+**Test coverage checked before writing anything new:**
+`tests/test_retry.py::test_429_honors_retry_after_header_over_computed_delay`
+already asserted the generic helper honours `Retry-After` over its computed
+backoff schedule - it existed before this session, so no duplicate was
+added there. The one new test above is narrower: it proves the new
+`sleep_fn` seam on `RazorpayHttpClient` actually receives that honoured
+value, which nothing previously tested (the existing
+`test_429_is_retried_and_then_succeeds` only asserted the retry occurred at
+all, using `retry-after: "0"`, not any specific honoured value).
+
+**Known gap, worsened by this change, not fixed in this session:**
+`disputedesk/cli/demo.py` was already over CLAUDE.md's 300-line module
+limit before this session (337 lines - a pre-existing violation from the
+"Demo: add a second, visibly different dispute fixture" commit, after the
+Phase 5 freeze's own refactor pass had it at 277). This session's addition
+brings it to 440 lines; two new top-level helpers
+(`_make_429_then_200_handler`, `_compressed_sleep_fn`, `_print_closing_banner`)
+were extracted specifically to keep every individual *function* under the
+50-line limit, but the file-level 300-line split was explicitly out of this
+session's scope ("do not refactor anything else"). Left as a stated
+limitation for a future refactor pass, not silently ignored.
+
+**Status:** DECIDED
+
+## 2026-09-01 — Demo split: deterministic Segment A vs. non-reproducible LLM Segment B
+
+**Decision/correction:** `disputedesk/cli/demo.py` previously implied its
+entire run was safe to treat as reproducible (no network, no secrets,
+fakes throughout - see the 2026-08-31 "Phase 4" entry's own caveat: "the
+demo script is fully self-contained (fakes only ...)"). That was true
+*then*, because every LLM call in the demo went through `FakeLLMClient`
+with fixed canned responses. It is no longer true for the whole script: the
+demo now has a second half that calls a real `GroqHttpLLMClient`. Reporting
+the full demo's stdout as byte-identical across cold clones would now be
+false, because live LLM completions are not bit-reproducible - the same
+prompt against the same model can (and, per this session's own test run,
+did: one of the two sampled disputes below hit the existing repair-then-
+fallback path on one run and might not on another) return different text
+call to call. **The claim is corrected here, not silently narrowed: it now
+applies to Segment A only.**
+
+Split into two printed segments:
+- **Segment A - Deterministic.** Every existing demo step (webhook
+  end-to-end, idempotency, second-dispute contrast, malformed-payload
+  rejection, both `SPEC.md` §7 failure paths, and the 429/Retry-After path
+  from the entry above) plus nothing new. No LLM call anywhere in this
+  segment - `FakeLLMClient` with fixed responses throughout, same as
+  before. `python -m disputedesk.cli.demo --deterministic-only` (new flag)
+  runs only this segment, for whatever reproducibility check needs a clean
+  byte-identical run - confirmed by running it twice against a stripped
+  environment (`env -i`, no `.env`, no exported secrets) and diffing:
+  identical both times.
+- **Segment B - LLM output (not reproducible).** New. Prints the real
+  drafted `explanation_letter` for exactly two disputes, chosen from
+  *existing* fixtures (no new fixture data needed) to differ on both axes
+  the brief asked for: `CONTEST_WORTHY_EVENT` (`MC_4837`, full required
+  evidence set available - AVS, CVV, device, and delivery all confirmed) and
+  `WEAK_EVIDENCE_EVENT` (`VISA_83`, a documented gap - none of those four
+  signals present). Per dispute, prints the reason code, the deterministic
+  reason-code map's required evidence types, which of those this specific
+  dispute's context actually supports, and the full letter text
+  (unmodified, unmodified `letter_text` field - no truncation). Uses the
+  real `GroqHttpLLMClient` and the existing, unmodified
+  `assemble_evidence_packet` / `draft_explanation_letter` code path and
+  prompt - printing only, nothing in `evidence/` changed. Skips with a
+  clear message (not a crash) if `get_settings()` can't construct a real
+  `Settings` object (missing `.env`).
+
+**New demo-only logic, not part of production `evidence/`:** which required
+evidence types a specific dispute's own context actually supports
+(`_available_evidence_types` in `disputedesk/cli/demo.py`) is new judgment
+this session added purely for Segment B's print output. The production
+evidence assembler (`disputedesk/evidence/assembler.py`) does not gate
+assembly on availability today - it assembles the full required set
+unconditionally for every contest decision (a stated gap already recorded
+in `ARCHITECTURE.md`'s "Known gaps": no document-upload pipeline, no
+per-type file-existence check). This demo-only helper does not change that;
+it only judges, for display, which of the required types this project's own
+existing order-context signals (AVS/CVV match, device fingerprint,
+delivery confirmation) would plausibly support.
+
+**Bug fixed as a necessary correctness fix, not scope creep:** the 429 demo
+step (entry above) used `os.environ.setdefault(...)` to inject placeholder
+Razorpay/LLM credentials, which - because it never had anything to revert
+to and `pydantic-settings` prefers a real env var over a real `.env` file -
+permanently overwrote the process environment with those placeholders for
+the rest of the run. This would have silently broken Segment B's real
+`GroqHttpLLMClient()` (it would pick up the placeholder `LLM_API_KEY` and
+fail, or worse, appear to work against a non-existent
+`https://example.test/llm`). Fixed by scoping that injection to
+`mock.patch.dict(os.environ, ..., clear=False)` (restores the exact prior
+environment on exit) and clearing `get_settings`'s `lru_cache` both after
+that block and (already) before it, so a real `.env`'s values reach
+Segment B unpoisoned. Covered implicitly: `pytest` still passes with no
+`.env` present (Segment A/production tests never call `get_settings()`
+through this path), and a manual run with real Groq credentials exported
+confirmed Segment B receives them correctly.
+
+**Docs updated to match:** `README.md`'s "Running the demo from a clean
+clone" section now describes both segments separately, states the
+byte-identical claim only for Segment A, and documents `.env`/network as a
+Segment-B-only requirement (previously the whole demo was described as
+needing neither). `disputedesk/cli/demo.py`'s own module docstring updated
+the same way. No existing `SPEC.md`, `PHASES.md`, or checklist text was
+found claiming demo-wide reproducibility to begin with (checked directly -
+`SPEC.md` §9's checklist item 12 is an unchecked box with no evidence
+citation attached to it in-repo); the correction target was this project's
+own prior framing in `DECISIONS.md` and `README.md`, both addressed above.
+
+**Why the split, not a fix to make Segment B "reproducible" instead:**
+pinning the LLM's output (e.g., temperature 0, or re-using a cached
+completion) would not make live provider output bit-reproducible across
+machines/time in the way this project's other reproducibility claims mean
+it (same model version, same weights, same sampling implementation, no
+provider-side drift) - and CLAUDE.md is explicit that claiming
+reproducibility that isn't real is worse than admitting the LLM segment
+isn't. Scoping the claim to Segment A, rather than manufacturing a false
+appearance of determinism for Segment B, is the honest fix.
+
+**Status:** DECIDED
+
+## 2026-09-01 — Letter-drafting validation reliability, weak vs. full evidence, measured
+
+**The weak-evidence dispute falls back to the deterministic template far
+more often than the full-evidence one, and every single failure - on both
+disputes, all 40 runs - is the completion getting truncated before the JSON
+closes, never a Pydantic schema-constraint violation.**
+
+**Result:** `draft_explanation_letter` (`disputedesk/evidence/draft_letter.py`,
+unmodified - prompt `explanation_letter_v1`, unmodified), called directly
+(not through `assemble_evidence_packet`) against the real Groq API
+(`openai/gpt-oss-20b`), 20 independent attempts each for the two Segment B
+demo fixtures (`disputedesk/cli/demo.py`'s `CONTEST_WORTHY_EVENT` / `MC_4837`,
+full required evidence available, and `WEAK_EVIDENCE_EVENT` / `VISA_83`, a
+documented gap - no AVS/CVV/device/delivery signal), same fixed
+`NormalizedCommunicationLog` reused across all 20 attempts per dispute
+(obtained once per dispute via one real `normalize_communication_log` call,
+so the only thing varying between the 20 attempts is the live model's own
+non-determinism, not the input):
+
+| | full_evidence (MC_4837) | weak_evidence (VISA_83) |
+|---|---|---|
+| first draft passed validation | 17/20 (85%) | 8/20 (40%) |
+| repair attempted | 3/20 (15%) | 12/20 (60%) |
+| repair succeeded (of attempted) | 0/3 (0%) | 2/12 (17%) |
+| **final path = template_fallback** | **3/20 (15%)** | **10/20 (50%)** |
+
+Side by side: **full_evidence fails 15% of the time; weak_evidence fails
+50% of the time** - roughly 3.3x, and material by any reasonable reading.
+
+**How:** `LLM_API_KEY=$GROQ_API_KEY LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+LLM_MODEL=openai/gpt-oss-20b python -m eval.run_llm_letter_validation_reliability
+--n-runs 20 --sleep-seconds 8.0 --out-dir data/eval` (`RAZORPAY_KEY_ID`/
+`RAZORPAY_KEY_SECRET`/`DATABASE_URL` set to unused dummy values only because
+`get_settings()` validates one `Settings` object, not per-feature). New
+files this session, measurement-only, no production code touched:
+`eval/llm_letter_validation_reliability.py` (pure record-building logic,
+unit-tested with `FakeLLMClient` in
+`tests/test_eval_llm_letter_validation_reliability.py` - 6 new tests, no
+network), `eval/run_llm_letter_validation_reliability.py` (the live-API
+entry point). Writes `data/eval/llm_letter_validation_reliability.csv` (one
+row per run) and `data/eval/llm_letter_validation_reliability_raw_failures.json`
+(every failing raw completion plus its exact error, for the diagnostic
+below). `pytest` (197 tests, up from 191) and `ruff check .` both pass.
+
+**Which validation rule is rejecting them: none - this is not a schema
+problem.** Across all 40 runs (both disputes), every recorded error is a
+`json.JSONDecodeError` (`_validation_error_text` in
+`eval/llm_letter_validation_reliability.py` reuses
+`disputedesk/evidence/validated_call.py`'s own `_parse` helper, so this is
+the exact error production validation would raise, not a re-derived
+approximation). Not one `pydantic.ValidationError` was observed on either
+dispute - no field ever violated a schema constraint (`letter_text`'s
+50-4000 character bound, `cites_evidence_types`'s shape, or `extra="forbid"`)
+in any of the 40 runs. Three representative raw failing completions
+(`weak_evidence`, all `json.JSONDecodeError`, verbatim from
+`llm_letter_validation_reliability_raw_failures.json`):
+
+1. **run 0, first attempt - empty completion.** `raw_response == ""`.
+   Error: `JSONDecodeError('Expecting value: line 1 column 1 (char 0)')`.
+   The model returned zero visible content.
+2. **run 4, first attempt - truncated after ~140 characters, mid-sentence,
+   before the JSON string even closes:**
+   ```
+   {"letter_text":"To the Visa Network,\n\nWe acknowledge receipt of the chargeback notification (Reason Code VISA_83) for transaction of INR 220
+   ```
+   Error: `JSONDecodeError('Unterminated string starting at: line 1 column 16 (char 15)')`
+   (character 15 is the `"` that opens the `letter_text` value - the string
+   itself, and therefore the whole JSON object, never closes).
+3. **run 1, first attempt - truncated after 2,896 characters, well into a
+   substantive multi-paragraph letter:**
+   ```
+   {"letter_text":"Subject: Merchant Narrative Supporting Dispute of Transaction INR 2200.00 – VISA_83\n\nDear Visa Dispute Team,\n\n[... ~2.7k more characters of real letter content ...]g details match the cardholder's records, the service was delivered successfully, and the customer had the opportunity to contest the purchase before the chargeback was lodged. We respectfully request
+   ```
+   Error: `JSONDecodeError('Unterminated string starting at: line 1 column 16 (char 15)')`
+   (same error class as #2 - the parser reports the same starting position
+   for any unterminated string regardless of how much text came after it).
+
+All three - and every other failure in the sample - fit one root cause:
+`disputedesk/evidence/llm.py`'s `GroqHttpLLMClient.complete()` sends a fixed
+`"max_tokens": 1024` on every request (shared with `normalize_comms.py`'s
+much shorter typed-field extraction task). The model sometimes spends most
+or all of that budget on Groq's hidden "reasoning" tokens before emitting
+any visible content at all (example 1: empty), sometimes emits a few dozen
+visible tokens of letter text before running out (example 2), and sometimes
+writes most of a real letter but still runs out before the closing quote
+and brace (example 3). The repair call (`repair_addendum_v1` prompt) does
+not fix this - it is the same completion request with the same
+`max_tokens=1024`, so it fails the same way for the same reason (10 of 12
+weak-evidence repairs, and all 3 full-evidence repairs, failed; see the CSV
+for the two repairs that did succeed).
+
+**Why weak_evidence fails more - a hypothesis, not confirmed by this
+measurement:** `GroqHttpLLMClient.complete()` does not surface token usage
+(`disputedesk/evidence/llm.py` reads only
+`body["choices"][0]["message"]["content"]`), so this measurement has no
+direct evidence of how many hidden reasoning tokens each call actually
+spent - only the visible-content length and where it got cut off. The
+weak-evidence prompt asks the model to write a confident contest letter
+from a context with no AVS/CVV/device/delivery signal at all (`disputedesk/evidence/prompts/explanation_letter_v1.txt`
+still instructs a single coherent narrative regardless of how much genuine
+evidence exists), which plausibly invites more hedging/reasoning before or
+during the visible letter text than the full-evidence case, where the
+narrative is simpler to write - consistent with weak_evidence's failures
+skewing more toward the empty-completion pattern (5 of 12 first-attempt
+failures) than full_evidence's (0 of 3). This is a plausible explanation
+for the gap, not a proven one; confirming it would need the raw token-usage
+field Groq's response body carries but this client doesn't currently read.
+
+**Caveats:** n=20 per dispute, one run, one seed of live-model sampling -
+not a multi-seed measurement (CLAUDE.md invariant 3 governs headline claims
+about this *system's* own performance; this is a diagnostic measurement of
+a third-party model's behavior on two fixed prompts, following the same
+one-shot precedent the 2026-09-01 "LLM normalisation quality" entry's n=60
+measurement used). A different run could show different absolute rates:
+`json.JSONDecodeError`'s prevalence and the total absence of any
+`ValidationError` are the load-bearing, more-likely-to-replicate finding
+here, not the exact 15%/50% split. Per this session's explicit instruction,
+nothing was fixed in response to this - `max_tokens=1024` in
+`disputedesk/evidence/llm.py` was not touched, and no prompt, schema, or
+retry-count was changed. Any future change made in response to this finding
+needs its own dated entry here explaining what changed and why.
+
+**Status:** CONFIRMED-RAN
+
+## 2026-09-01 — Letter-drafting reliability, re-measured after the fix
+
+**Fixed. Both fixtures now pass 20/20, zero repairs needed on either. The
+weak-evidence gap did not survive the fix - it did not partially close, it
+closed completely (50% -> 0%, 15% -> 0%). The truncation bug fully explains
+the prior gap; the earlier "weak-evidence prompts more hedging" hypothesis
+is not needed and not supported by this result (see the correction at the
+end of this entry).**
+
+**1. Parameter name and whether Groq was honouring it:** confirmed live,
+2026-09-01, before touching any code: a bare request with `"max_tokens": 50`
+against `openai/gpt-oss-20b` returned `usage.completion_tokens: 50` and
+`finish_reason: "length"` - Groq **was honouring** the deprecated `max_tokens`
+alias, not silently ignoring it. The bug was never the parameter name; it
+was the *value*, combined with a fact the old code had no visibility into
+(see #2). `disputedesk/evidence/llm.py` now sends `max_completion_tokens`
+(console.groq.com/docs/reasoning, verified 2026-09-01: the documented
+parameter for `openai/gpt-oss-20b`), not `max_tokens`, on principle - both
+work, but only one is documented and safe to depend on going forward.
+
+**2. Usage logging - the instrument, added before anything else changed:**
+`GroqHttpLLMClient._record_usage` now reads `usage.prompt_tokens`,
+`usage.completion_tokens`, and `usage.completion_tokens_details.reasoning_tokens`
+from every response, appends a record to a new `self.usage_log` list, and
+logs it via `logging.getLogger(__name__).info(...)`. Confirmed live
+(2026-09-01) that `reasoning_tokens` **counts against the same
+`completion_tokens` budget as visible output**, not a separate one - the
+`max_tokens=50` probe above returned `reasoning_tokens: 48` of those 50,
+leaving 2 for visible content (0 characters emitted). This is the root
+cause the 2026-09-01 "Letter-drafting validation reliability" entry
+diagnosed structurally (every failure a `JSONDecodeError` from truncation,
+never a schema `ValidationError`) but couldn't see numerically, because the
+client discarded `usage` entirely before this fix.
+
+**3. Completion budget, raised from arithmetic:** `GroqHttpLLMClient.MAX_COMPLETION_TOKENS = 1512`
+(`disputedesk/evidence/llm.py`, replacing the old flat `1024`), derived and
+commented in the code as: `ExplanationLetterOutput.letter_text`'s own
+`max_length=4000` chars / ~3.6 measured chars-per-token on this model
+(live: 2804 chars/581 tokens and 1678 chars/349 tokens, both at
+`reasoning_effort="low"`) ≈ 1112 visible tokens, + ~100 tokens of JSON
+scaffolding (keys, braces, up to 5 `cites_evidence_types` strings), + ~300
+tokens reserved for reasoning (measured 4-5 at `reasoning_effort="low"`,
+but budgeted wide since a caller can override to `"medium"`/`"high"`
+without touching this constant) = 1512.
+
+**4. `reasoning_effort`, added as a configurable parameter, defaulting to
+`"low"`:** `GroqHttpLLMClient.__init__(..., reasoning_effort: str = "low")`,
+sent as `"reasoning_effort"` in every request body. Justified in the
+constructor's own docstring: both of this client's two SPEC.md §2 jobs -
+drafting a letter from already-decided, already-supplied facts, and
+normalising free text into typed booleans - are prose generation and
+extraction, not reasoning tasks; the contest/accept decision that *would*
+need reasoning is made upstream, deterministically, before the LLM is ever
+called (`disputedesk/policy/`, unchanged, still never sees a prompt).
+Confirmed live (2026-09-01, same two prompts): `reasoning_effort="low"` cut
+`reasoning_tokens` from 300-700 (provider default, unset) to 4-5 per call,
+with `finish_reason="stop"` (a complete, non-truncated response) both times.
+
+**Result - the re-measurement, unchanged harness:** `eval/run_llm_letter_validation_reliability.py`
+re-run exactly as the 2026-09-01 "Letter-drafting validation reliability"
+entry ran it (`eval/llm_letter_validation_reliability.py`'s
+`run_letter_reliability_sample`/`run_one_draft_attempt`/`failure_rate` -
+the actual classification logic - untouched), 20 letter-drafting attempts
+per fixture, `reasoning_effort="low"` (this client's new default):
+
+| | full_evidence (MC_4837) - before → after | weak_evidence (VISA_83) - before → after |
+|---|---|---|
+| first draft passed validation | 17/20 (85%) → **20/20 (100%)** | 8/20 (40%) → **20/20 (100%)** |
+| repair attempted | 3/20 (15%) → **0/20 (0%)** | 12/20 (60%) → **0/20 (0%)** |
+| repair succeeded (of attempted) | 0/3 (0%) → n/a (none attempted) | 2/12 (17%) → n/a (none attempted) |
+| **final path = template_fallback** | **15% → 0%** | **50% → 0%** |
+
+Side by side, before → after: **full_evidence 15% → 0%; weak_evidence
+50% → 0%.** The 3.3x gap is gone, not narrowed.
+
+**Median token usage per letter-drafting call** (from
+`GroqHttpLLMClient.usage_log`, one fresh client instance per fixture so
+each fixture's log is isolated; the one `normalize_communication_log` call
+per fixture is excluded - this is calls to the drafting step specifically,
+n=20 each since zero repairs means exactly one call per run):
+
+| | full_evidence (MC_4837) | weak_evidence (VISA_83) |
+|---|---|---|
+| median completion_tokens | 412 | 478 |
+| median reasoning_tokens | 9 | 6 |
+
+Both comfortably under the 1512 ceiling, and - notably - weak_evidence's
+median `reasoning_tokens` (6) is not higher than full_evidence's (9) at
+`reasoning_effort="low"`. This is the direct evidence against the hedging
+hypothesis: see the correction below.
+
+**How:** `LLM_API_KEY=$GROQ_API_KEY LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+LLM_MODEL=openai/gpt-oss-20b python -m eval.run_llm_letter_validation_reliability
+--n-runs 20 --sleep-seconds 8.0 --reasoning-effort low --sample-letters 2
+--out-dir data/eval`. `eval/run_llm_letter_validation_reliability.py` gained
+per-fixture usage tracking and a `_print_sample_letters` step this session
+(the classification harness itself did not change - see above); it now
+takes `--reasoning-effort` so a future comparison run doesn't need a code
+edit. The pre-fix CSV/JSON were preserved as
+`data/eval/llm_letter_validation_reliability_before_fix.csv` and
+`..._raw_failures_before_fix.json` before this run overwrote the originals.
+New tests: `tests/test_evidence_llm_groq.py` (7 tests, `httpx.MockTransport`,
+no network) asserting the request body sends `max_completion_tokens` not
+`max_tokens`, `reasoning_effort` defaults to `"low"` and is overridable, and
+`usage_log` records `prompt_tokens`/`completion_tokens`/`reasoning_tokens`
+correctly (including when the field is absent). `pytest` (204 tests, up
+from 197) and `ruff check .` both pass.
+
+**Letter-quality check, two full weak-evidence letters at
+`reasoning_effort="low"` (printed verbatim by the run above, not excerpted
+here to keep this entry a reasonable length - see the run's stdout / re-run
+with `--sample-letters 2` to reproduce): both are complete, coherent,
+correctly cite the required evidence types by name (`access_activity_log`,
+`billing_proof`, `proof_of_service`, `customer_communication`), address the
+correct reason code and amount, and end with `finish_reason="stop"` (no
+truncation). **Judgment: quality did not drop; no `reasoning_effort="medium"`
+re-run was run.** One real, minor flaw worth recording rather than
+smoothing over: the first sample letter (run 0) contains two sign-off
+blocks back to back ("Sincerely, Merchant Services Team" immediately
+followed by "Best regards, [Merchant Name]") - a small coherence artifact,
+not a validation failure (the schema has no rule against it) and not
+something this session fixed, since fixing prompt content was out of scope
+here. This is a judgment call made in this session, not confirmed by the
+user viewing the letters directly - the raw text remains in this run's
+stdout for independent review, and a `--reasoning-effort medium` comparison
+run is one command away if that judgment is disputed.
+
+**Correction to the 2026-09-01 "Letter-drafting validation reliability"
+entry's hedging hypothesis:** that entry proposed, explicitly flagged as
+"a hypothesis, not confirmed," that weak_evidence's higher failure rate
+might reflect the model spending more hidden reasoning tokens hedging a
+weaker case. This measurement did not confirm it and does not need it: the
+gap fully closes under `reasoning_effort="low"` for both fixtures alike,
+and at low effort weak_evidence's median `reasoning_tokens` (6) is not
+higher than full_evidence's (9) - if extra hedging were a real, separate
+effect on top of the truncation bug, some residual gap or reasoning-token
+asymmetry would be expected to survive fixing the budget, and none did.
+The original entry is left visible and uncorrected in place, per this
+file's own append-only rule; this entry is the correction.
+
+**Caveats:** n=20 per fixture, one run at `reasoning_effort="low"`, same
+one-shot precedent as the entry this corrects (CLAUDE.md invariant 3 governs
+headline claims about this *system's* own performance, not a diagnostic
+measurement of a third-party model's behavior on two fixed prompts). A 0%
+failure rate at n=20 is consistent with a true rate as high as roughly 14%
+at typical confidence levels - "fixed" here means "the specific failure
+mode that produced 15%/50% did not recur in 40 attempts," not "provably
+zero forever." `disputedesk/evidence/prompts/explanation_letter_v1.txt` and
+`disputedesk/evidence/draft_letter.py`'s logic were not touched - only
+`disputedesk/evidence/llm.py`'s request parameters and usage handling.
+
+**Status:** CONFIRMED-RAN

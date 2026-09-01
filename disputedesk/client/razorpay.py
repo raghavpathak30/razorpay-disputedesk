@@ -39,6 +39,8 @@ the API's documented 1000-character limit) with `action="submit"`; the
 the audit log for a human reviewer, not attached as files here.
 """
 
+import time
+from collections.abc import Callable
 from typing import Protocol
 
 import httpx
@@ -109,12 +111,21 @@ class RazorpayHttpClient:
     Phase 0 config-module rule.
     """
 
-    def __init__(self, timeout_seconds: float = 30.0, max_retries: int = 3):
+    def __init__(
+        self,
+        timeout_seconds: float = 30.0,
+        max_retries: int = 3,
+        sleep_fn: Callable[[float], None] = time.sleep,
+    ):
         settings = get_settings()
         self._base_url = settings.razorpay_api_base_url
         self._auth = (settings.razorpay_key_id, settings.razorpay_key_secret)
         self._timeout_seconds = timeout_seconds
         self._max_retries = max_retries
+        # Seam for tests/the demo script to observe or compress the wait
+        # between retries without touching call_with_backoff itself - real
+        # callers never pass this, so production behaviour is unchanged.
+        self._sleep_fn = sleep_fn
 
     def _call(self, method: str, path: str, json_body: dict | None) -> dict:
         def _do_request() -> httpx.Response:
@@ -128,7 +139,9 @@ class RazorpayHttpClient:
             response.raise_for_status()
             return response
 
-        response = call_with_backoff(_do_request, max_retries=self._max_retries)
+        response = call_with_backoff(
+            _do_request, max_retries=self._max_retries, sleep_fn=self._sleep_fn
+        )
         return response.json()
 
     def accept(self, dispute_id: str) -> dict:

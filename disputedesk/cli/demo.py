@@ -1,14 +1,28 @@
 """Demo script (PHASES.md Phase 4 item 8): replays fixture dispute events
 through the real webhook route end to end - webhook in, features, `P(win)`,
 policy decision, evidence assembly, API call, audit row out - and
-demonstrates both SPEC.md §7 failure paths live. Runnable from a clean
-clone with no `.env` and no network: the LLM and Razorpay clients are fakes
-(CLAUDE.md: "No test may make a network call. Fake both the LLM and the
-Razorpay API."), and the model is trained in memory from the same synthetic
-generator every other command in this project already uses - no secrets,
-no persisted artifacts, no external services required.
+demonstrates both SPEC.md §7 failure paths live.
 
-Run: `python -m disputedesk.cli.demo`
+Two segments, printed under their own headers:
+
+- **Segment A - Deterministic.** Every step above, plus the 429/Retry-After
+  recovery path. Runnable from a clean clone with no `.env` and no network:
+  the LLM and Razorpay clients are fakes (CLAUDE.md: "No test may make a
+  network call. Fake both the LLM and the Razorpay API."), and the model is
+  trained in memory from the same synthetic generator every other command in
+  this project already uses. This segment's stdout is byte-identical across
+  cold clones (same seed, same fixtures, no LLM, no wall-clock timestamps).
+  Pass `--deterministic-only` to run only this segment - this is what any
+  reproducibility check should invoke, since Segment B below never can be.
+- **Segment B - LLM output (not reproducible).** Two disputes that differ on
+  both reason code and evidence availability, drafted by a real
+  `GroqHttpLLMClient` (SPEC.md §2's other allowed LLM job) and printed
+  verbatim. Needs a populated `.env` (all of it - `get_settings()` validates
+  one `Settings` object, not per-feature) and network access; skipped with a
+  clear message if that's not available, never a crash.
+
+Run: `python -m disputedesk.cli.demo` (both segments)
+Run: `python -m disputedesk.cli.demo --deterministic-only` (Segment A only)
 
 By default the audit DB is an in-memory SQLite database, so each run starts
 clean. Pass `--db-path` to use a file instead - this is what lets the same
@@ -20,7 +34,10 @@ Run: `python -m disputedesk.cli.demo --db-path data/demo/disputedesk.db`
 
 import argparse
 import json
+import os
+import time
 import warnings
+from unittest import mock
 
 import httpx
 
@@ -45,8 +62,12 @@ from disputedesk.api.webhook import (
 )
 from disputedesk.audit.db import get_engine, init_db, make_session_factory
 from disputedesk.audit.log import get_audit_trail
-from disputedesk.client.razorpay import FakeRazorpayClient
-from disputedesk.evidence.llm import FakeLLMClient
+from disputedesk.client.razorpay import FakeRazorpayClient, RazorpayHttpClient
+from disputedesk.config import get_settings
+from disputedesk.evidence.assembler import assemble_evidence_packet
+from disputedesk.evidence.context import DisputeContext
+from disputedesk.evidence.llm import FakeLLMClient, GroqHttpLLMClient
+from disputedesk.evidence.reason_code_map import required_evidence_types
 from disputedesk.features.matrix import build_feature_matrix
 from disputedesk.generator.config import GeneratorConfig
 from disputedesk.generator.pipeline import generate_dataset, temporal_split
@@ -142,6 +163,29 @@ WEAK_EVIDENCE_EVENT = {
         }
     },
 }
+
+
+# Same feature profile as CONTEST_WORTHY_EVENT (real duplication would fail
+# schema validation on `id` reuse) - only the id/payment_id differ, since
+# this step needs a CONTEST decision so RazorpayHttpClient.contest() is the
+# call that hits the stubbed 429.
+RETRY_AFTER_EVENT = json.loads(json.dumps(CONTEST_WORTHY_EVENT))
+RETRY_AFTER_EVENT["payload"]["dispute"]["entity"]["id"] = "disp_demo_429_recover"
+RETRY_AFTER_EVENT["payload"]["dispute"]["entity"]["payment_id"] = "pay_demo_429_recover"
+
+# Placeholder credentials for this step only - RazorpayHttpClient.__init__
+# reads them via get_settings(), but the transport is stubbed below, so
+# nothing with these values ever reaches a real network call.
+_DEMO_SETTINGS_ENV = {
+    "RAZORPAY_KEY_ID": "rzp_test_demo",
+    "RAZORPAY_KEY_SECRET": "demo_secret",
+    "LLM_API_KEY": "demo",
+    "LLM_API_URL": "https://example.test/llm",
+    "LLM_MODEL": "demo-model",
+    "DATABASE_URL": "sqlite:///:memory:",
+}
+
+_DEMO_SLEEP_COMPRESSION = 0.01  # real sleep is compressed 100x; printed values are the real ones
 
 
 def _train_demo_model():
@@ -283,7 +327,178 @@ def demo_failure_path_timeout_retry() -> None:
     print(f"  total attempts made: {attempts['n']} (filed exactly once, not once per attempt)")
 
 
-def main() -> None:
+def _make_429_then_200_handler(retry_after_seconds: str, dispute_id: str):
+    """A `httpx.MockTransport` handler: 429 with `Retry-After` on the first
+    call, 200 on every call after - the transport-layer fixture that injects
+    the failure, never touching `call_with_backoff` itself. Returns the
+    handler plus the shared call counter, so a caller can report how many
+    attempts were actually made.
+    """
+    responses_sent = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        responses_sent["n"] += 1
+        if responses_sent["n"] == 1:
+            print(f"  attempt 1: Razorpay responds 429, Retry-After: {retry_after_seconds}")
+            return httpx.Response(429, headers={"retry-after": retry_after_seconds})
+        print(f"  attempt {responses_sent['n']}: Razorpay responds 200")
+        return httpx.Response(200, json={"id": dispute_id, "status": "under_review"})
+
+    return handler, responses_sent
+
+
+def _compressed_sleep_fn(seconds: float) -> None:
+    """`RazorpayHttpClient`'s injected `sleep_fn` for this demo step: prints
+    the real honoured interval `call_with_backoff` passed in, then sleeps a
+    compressed fraction of it so the demo doesn't actually wait 3 seconds.
+    """
+    print(
+        f"  call_with_backoff sleeps {seconds:.1f}s (the honoured Retry-After "
+        f"value - matches the header above) - compressed to "
+        f"{seconds * _DEMO_SLEEP_COMPRESSION:.3f}s of real wall-clock time for this demo"
+    )
+    time.sleep(seconds * _DEMO_SLEEP_COMPRESSION)
+
+
+def demo_failure_path_429_retry_after(
+    client: TestClient, engine, fake_razorpay: FakeRazorpayClient
+) -> None:
+    print()
+    print("=" * 72)
+    print("7. Failure path 3: Razorpay returns HTTP 429 with Retry-After, then recovers")
+    print("=" * 72)
+    print("   (a real 429 response is injected at the httpx transport layer via")
+    print("    httpx.MockTransport - disputedesk.retry.call_with_backoff, the same")
+    print("    helper failure path 1 above uses, honours the Retry-After header and")
+    print("    retries. No new retry logic; this runs through the real")
+    print("    RazorpayHttpClient over the real webhook route.)")
+
+    handler, responses_sent = _make_429_then_200_handler("3", "disp_demo_429_recover")
+    transport = httpx.MockTransport(handler)
+
+    def _routed_request(method, url, **kwargs):
+        with httpx.Client(transport=transport) as http_client:
+            return http_client.request(method, url, **kwargs)
+
+    # Scoped, not `os.environ.setdefault` (which would permanently leave these
+    # placeholder values in the process environment - since pydantic-settings
+    # prefers a real env var over a real `.env` file, that would silently
+    # poison `get_settings()` for Segment B's real Groq client too).
+    # `mock.patch.dict` restores the exact prior environment on exit.
+    with mock.patch.dict(os.environ, _DEMO_SETTINGS_ENV, clear=False):
+        get_settings.cache_clear()
+        real_razorpay = RazorpayHttpClient(sleep_fn=_compressed_sleep_fn)
+        with mock.patch("httpx.request", _routed_request):
+            app.dependency_overrides[get_razorpay_client] = lambda: real_razorpay
+            response = client.post("/webhooks/disputes", json=RETRY_AFTER_EVENT)
+        app.dependency_overrides[get_razorpay_client] = lambda: fake_razorpay
+    get_settings.cache_clear()  # drop the placeholder-backed Settings, restore real env
+
+    print(f"  POST /webhooks/disputes -> {response.status_code}")
+    print(f"  {response.json()}")
+    print(f"  total attempts made against Razorpay: {responses_sent['n']} (filed exactly once)")
+    _print_audit_trail(engine, "disp_demo_429_recover")
+
+
+def _print_segment_header(title: str) -> None:
+    print()
+    print()
+    print("#" * 72)
+    print(f"# SEGMENT {title}")
+    print("#" * 72)
+
+
+# Demo-only, printing-only judgment of which of a reason code's required
+# evidence types this *specific* dispute's own order-context facts actually
+# support - not part of the production evidence assembler, which does not
+# gate assembly on availability today (a stated gap, see ARCHITECTURE.md's
+# "Known gaps": no document-upload pipeline, no per-type file existence
+# check). Mirrors reason_code_map.py's own comments on what each evidence
+# type stands for. `customer_communication` and `explanation_letter` are
+# always produced (the raw log is always present in these fixtures; the
+# letter is always drafted, by the LLM or the deterministic fallback).
+_ALWAYS_AVAILABLE_EVIDENCE = ("customer_communication", "explanation_letter")
+
+
+def _available_evidence_types(entity: dict) -> set[str]:
+    available = set(_ALWAYS_AVAILABLE_EVIDENCE)
+    if entity["avs_match"] and entity["cvv_match"]:
+        available.add("billing_proof")
+    if entity["device_fingerprint_known"]:
+        available.add("access_activity_log")
+    if entity["delivery_confirmed"]:
+        available.add("proof_of_service")
+    return available
+
+
+def _context_from_entity(entity: dict) -> DisputeContext:
+    return DisputeContext(
+        reason_code=entity["reason_code"],
+        amount=entity["amount"],
+        avs_match=entity["avs_match"],
+        cvv_match=entity["cvv_match"],
+        device_fingerprint_known=entity["device_fingerprint_known"],
+        delivery_confirmed=entity["delivery_confirmed"],
+        prior_order_count=entity["prior_order_count"],
+    )
+
+
+def _print_letter_sample(label: str, event: dict, llm_client: GroqHttpLLMClient) -> None:
+    entity = event["payload"]["dispute"]["entity"]
+    context = _context_from_entity(entity)
+    required = required_evidence_types(context.reason_code)
+    available = _available_evidence_types(entity)
+    missing = [t for t in required if t not in available]
+
+    print()
+    print("-" * 72)
+    print(f"{label}: dispute_id={entity['id']}")
+    print("-" * 72)
+    print(f"  reason_code                  = {context.reason_code}")
+    print(f"  required evidence types      = {list(required)}")
+    print(f"  available for this dispute   = {[t for t in required if t in available]}")
+    print(f"  documented gap (unavailable) = {missing or 'none - full required set available'}")
+
+    packet = assemble_evidence_packet(context, entity["customer_communication_log"], llm_client)
+    if packet.human_review_required:
+        print("  NOTE: the live LLM call failed validation twice - this is the")
+        print("  deterministic fallback template, not a real completion:")
+    else:
+        print("  drafted explanation_letter (live Groq completion, verbatim, no truncation):")
+    print(f"  {packet.explanation_letter.letter_text}")
+
+
+def demo_segment_b_llm_letters() -> bool:
+    """Returns whether Segment B actually made live LLM calls, so `main()`
+    can report accurately in the closing banner rather than assuming success.
+    """
+    print()
+    print("8. Real drafted letters for two disputes, chosen to differ on both the")
+    print("   fraud reason code and evidence availability")
+    print("   (live Groq completions - a second run will very likely differ in")
+    print("    wording; only Segment A above is claimed byte-identical)")
+    try:
+        llm_client = GroqHttpLLMClient()
+    except Exception as error:  # noqa: BLE001 - missing/invalid .env must degrade, not crash
+        print(f"  skipped: could not construct a real LLM client ({error!r})")
+        print("  Segment B needs a populated .env (all of it - see .env.example) and")
+        print("  network access to the configured LLM_API_URL. Not run.")
+        return False
+
+    _print_letter_sample(
+        "Dispute A - MC_4837, full required evidence set available",
+        CONTEST_WORTHY_EVENT,
+        llm_client,
+    )
+    _print_letter_sample(
+        "Dispute B - VISA_83, documented evidence gap (no AVS/CVV/device/delivery signal)",
+        WEAK_EVIDENCE_EVENT,
+        llm_client,
+    )
+    return True
+
+
+def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--db-path",
@@ -294,14 +509,19 @@ def main() -> None:
             "in-memory (fresh-per-run) database."
         ),
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--deterministic-only",
+        action="store_true",
+        help=(
+            "Run only Segment A (no LLM calls, no network, no .env needed). "
+            "This is the segment a byte-identical-across-cold-clones check should use - "
+            "Segment B (live LLM letter drafts) is never reproducible by design."
+        ),
+    )
+    return parser.parse_args()
 
-    model = _train_demo_model()
 
-    database_url = f"sqlite:///{args.db_path}" if args.db_path else "sqlite:///:memory:"
-    engine = get_engine(database_url)
-    init_db(engine)
-
+def _wire_dependency_overrides(engine, model) -> tuple[FakeLLMClient, FakeRazorpayClient]:
     fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
     fake_razorpay = FakeRazorpayClient()
 
@@ -316,20 +536,50 @@ def main() -> None:
     app.dependency_overrides[get_llm_client] = lambda: fake_llm
     app.dependency_overrides[get_razorpay_client] = lambda: fake_razorpay
     app.dependency_overrides[get_model] = lambda: (model, DEMO_MODEL_VERSION)
+    return fake_llm, fake_razorpay
 
+
+def main() -> None:
+    args = _parse_args()
+
+    model = _train_demo_model()
+
+    database_url = f"sqlite:///{args.db_path}" if args.db_path else "sqlite:///:memory:"
+    engine = get_engine(database_url)
+    init_db(engine)
+
+    _fake_llm, fake_razorpay = _wire_dependency_overrides(engine, model)
     client = TestClient(app)
 
+    _print_segment_header("A - Deterministic (byte-identical across cold clones, no LLM calls)")
     demo_end_to_end(client, engine)
     demo_second_dispute(client, engine)
     demo_malformed_webhook(client)
     demo_failure_path_llm_degrades(client, engine)
     demo_failure_path_timeout_retry()
+    demo_failure_path_429_retry_after(client, engine, fake_razorpay)
 
+    if args.deterministic_only:
+        _print_closing_banner(ran_segment_b=False)
+        return
+
+    _print_segment_header("B - LLM output (not reproducible)")
+    ran_segment_b = demo_segment_b_llm_letters()
+
+    _print_closing_banner(ran_segment_b=ran_segment_b)
+
+
+def _print_closing_banner(*, ran_segment_b: bool) -> None:
     print()
     print("=" * 72)
     print("Done. Every step above ran against the real webhook route, the real")
     print("policy engine, the real evidence assembler, and the real retry helper -")
-    print("only the LLM and Razorpay API calls were faked (no network, no secrets).")
+    print("step 7 additionally ran the real RazorpayHttpClient (network calls")
+    print("stubbed at the httpx transport layer). Segment A made no live network")
+    print("call and read no secret from a real .env.")
+    if ran_segment_b:
+        print("Segment B made real, live Groq API calls - its output is not part of")
+        print("the byte-identical-across-cold-clones claim.")
     print("=" * 72)
 
 

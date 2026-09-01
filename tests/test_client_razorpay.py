@@ -147,6 +147,32 @@ def test_429_is_retried_and_then_succeeds(monkeypatch):
     assert result == {"id": "disp_5", "status": "lost"}
 
 
+def test_429_retry_after_reaches_injected_sleep_fn(monkeypatch):
+    """`RazorpayHttpClient`'s `sleep_fn` seam (used by the demo script to
+    compress and observe the wait) must receive the honoured Retry-After
+    value from `call_with_backoff`, not the default exponential schedule -
+    complements `tests/test_retry.py::test_429_honors_retry_after_header_over_computed_delay`,
+    which already proves the generic helper honours the header; this proves
+    the client actually wires that behaviour through, at the client level.
+    """
+    responses_sent = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        responses_sent["n"] += 1
+        if responses_sent["n"] == 1:
+            return httpx.Response(429, headers={"retry-after": "5"})
+        return httpx.Response(200, json={"id": "disp_6", "status": "under_review"})
+
+    _patch_transport(monkeypatch, httpx.MockTransport(handler))
+    sleeps: list[float] = []
+    client = RazorpayHttpClient(sleep_fn=sleeps.append)
+
+    result = client.accept("disp_6")
+
+    assert result == {"id": "disp_6", "status": "under_review"}
+    assert sleeps == [5.0]  # the honoured header value, not base_delay_seconds * 2**0
+
+
 def test_fake_client_queues_an_exception_then_a_response():
     fake = FakeRazorpayClient(
         contest_responses=[
