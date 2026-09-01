@@ -44,15 +44,31 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from disputedesk.features.build import REASON_CODES
+
+# Identifiers are interpolated directly into the Razorpay API request path
+# (`disputedesk/client/razorpay.py`'s `f"/disputes/{dispute_id}/..."`) and
+# used as SQL parameter values elsewhere - a `str` with no shape constraint
+# would let a malformed or hostile webhook payload put `/`, `?`, or other
+# URL-structuring characters into a request path this system builds by
+# string interpolation, not a URL-safe join. Constrained to the charset
+# Razorpay's own ids actually use (a prefix, an underscore, alphanumerics).
+_ID_PATTERN = r"^[A-Za-z0-9_]{1,64}$"
+
 
 class DisputeEntity(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    id: str
-    payment_id: str
+    id: str = Field(pattern=_ID_PATTERN)
+    payment_id: str = Field(pattern=_ID_PATTERN)
     amount: float = Field(gt=0, description="Rupees - see module docstring.")
     currency: str
-    reason_code: str
+    # Restricted to the codes `disputedesk/evidence/reason_code_map.py` has a
+    # defense strategy for - that lookup raises `KeyError` on anything else,
+    # which would otherwise surface as an unhandled 500 for a `contest`-bound
+    # dispute instead of a 422 rejected here, at the boundary, per this
+    # phase's "validate every field, not just status" review.
+    reason_code: Literal[*REASON_CODES]
     phase: Literal["fraud", "retrieval", "chargeback", "pre_arbitration", "arbitration"]
     status: Literal["open"]
 
@@ -64,7 +80,10 @@ class DisputeEntity(BaseModel):
     prior_dispute_count: int = Field(ge=0)
     ip_geo_billing_distance_km: float = Field(ge=0)
     days_between_purchase_and_dispute: float = Field(ge=0)
-    customer_communication_log: str
+    # Bounded well above any realistic customer message, so an oversized
+    # payload can't inflate LLM token cost/latency unboundedly - not a
+    # correctness constraint, a cost/DoS one.
+    customer_communication_log: str = Field(max_length=5000)
     card_network: str
     checkout_hour_of_day: int = Field(ge=0, le=23)
 

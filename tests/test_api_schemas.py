@@ -83,6 +83,29 @@ def test_missing_envelope_payload_is_rejected():
         DisputeWebhookEvent.model_validate({"event": "dispute.created"})
 
 
+def test_unrecognized_reason_code_is_rejected():
+    # disputedesk/evidence/reason_code_map.py has no defense strategy for
+    # anything outside the four known codes and raises KeyError - this must
+    # be rejected here, at the webhook boundary, not surface as an unhandled
+    # 500 later for a dispute the policy engine decides to contest.
+    with pytest.raises(ValidationError):
+        DisputeWebhookEvent.model_validate(_event({"reason_code": "NOT_A_REAL_CODE"}))
+
+
+@pytest.mark.parametrize("bad_id", ["disp/../secrets", "disp?x=1", "", "x" * 65])
+def test_id_with_unsafe_or_out_of_range_characters_is_rejected(bad_id):
+    # `id` is interpolated directly into the Razorpay API request path
+    # (disputedesk/client/razorpay.py) - a `/` or `?` here could alter the
+    # request target, not just misname the dispute.
+    with pytest.raises(ValidationError):
+        DisputeWebhookEvent.model_validate(_event({"id": bad_id}))
+
+
+def test_communication_log_over_the_length_cap_is_rejected():
+    with pytest.raises(ValidationError):
+        DisputeWebhookEvent.model_validate(_event({"customer_communication_log": "x" * 5001}))
+
+
 def test_extra_unknown_fields_on_the_entity_are_ignored_not_rejected():
     # Real Razorpay dispute entities carry an `evidence` sub-object this
     # webhook doesn't need - unknown fields shouldn't make an otherwise
