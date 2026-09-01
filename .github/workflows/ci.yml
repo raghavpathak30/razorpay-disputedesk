@@ -22,3 +22,24 @@ jobs:
 
       - name: Test
         run: pytest
+
+      - name: Demo reproducibility (Segment A)
+        run: |
+          set +e
+          python -m disputedesk.cli.demo --deterministic-only > /tmp/demo_run1.txt
+          status1=$?
+          python -m disputedesk.cli.demo --deterministic-only > /tmp/demo_run2.txt
+          status2=$?
+          set -e
+
+          if [ "$status1" -ne 0 ] || [ "$status2" -ne 0 ]; then
+            echo "demo exited non-zero: run1=$status1 run2=$status2" >&2
+            exit 1
+          fi
+
+          if [ ! -s /tmp/demo_run1.txt ] || [ ! -s /tmp/demo_run2.txt ]; then
+            echo "demo produced empty output" >&2
+            exit 1
+          fi
+
+          diff /tmp/demo_run1.txt /tmp/demo_run2.txt

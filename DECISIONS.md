@@ -1460,3 +1460,27 @@ pass (three pre-existing, unrelated formatting drifts in files this session
 did not touch are left as found).
 
 **Status:** CONFIRMED-RAN
+
+---
+
+## 2026-09-02 — Demo reproducibility check moved from description to enforcement
+
+**Decision:** The Segment A byte-identical claim (`README.md`'s "Running the
+demo from a clean clone" section, and the manual "ran it twice, diffed clean"
+verifications in the 2026-09-01 and prior DECISIONS.md entries) was never
+scripted anywhere - not in CI, not as a Makefile target, not as any checked-in
+script. It existed only as prose describing the property and as ad hoc manual
+runs recorded after the fact. That check also had a real gap even when done by
+hand: `diff` on two empty files, or two files from crashed runs, returns
+success - nothing upstream of the `diff` call asserted the demo actually ran
+and printed something. Added a CI step (`.github/workflows/ci.yml`, "Demo
+reproducibility (Segment A)") that runs `python -m disputedesk.cli.demo
+--deterministic-only` twice, fails if either run exits non-zero, fails if
+either captured file is empty, and only then diffs the two files.
+**Why:** "reproducible" was a claim resting on a check that ran only when a
+session happened to run it by hand, and even then couldn't distinguish two
+successful identical runs from two crashed/empty ones. A property this project
+reports as evidence (CLAUDE.md: "no metric is ever reported... nothing unbuilt
+is described as built") needs the check enforced at commit time like every
+other headline claim here, not re-verified manually each time someone asks.
+**Status:** DECIDED

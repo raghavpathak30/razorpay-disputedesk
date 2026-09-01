@@ -45,12 +45,12 @@ import httpx
 # import that `httpx2` isn't installed (it falls back to `httpx`, which this
 # project already depends on and uses correctly - see tests/test_client_razorpay.py
 # and tests/test_api_webhook.py's own TestClient use). Silenced narrowly by
-# warning class, not by category, so an unrelated deprecation elsewhere in
-# this script still surfaces.
+# matching the message text, not the warning class - `StarletteDeprecationWarning`
+# is version-coupled (it moved/vanished across starlette releases, and starlette
+# isn't pinned), so importing it here could crash this script on a fresh clone
+# before it prints anything. A message match needs no import and can't do that.
 with warnings.catch_warnings():
-    from starlette.exceptions import StarletteDeprecationWarning
-
-    warnings.filterwarnings("ignore", category=StarletteDeprecationWarning)
+    warnings.filterwarnings("ignore", message=".*httpx2.*")
     from fastapi.testclient import TestClient
 
 from disputedesk.api.webhook import (
