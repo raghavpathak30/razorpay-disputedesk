@@ -20,9 +20,21 @@ Run: `python -m disputedesk.cli.demo --db-path data/demo/disputedesk.db`
 
 import argparse
 import json
+import warnings
 
 import httpx
-from fastapi.testclient import TestClient
+
+# fastapi.testclient imports starlette.testclient, which warns on every
+# import that `httpx2` isn't installed (it falls back to `httpx`, which this
+# project already depends on and uses correctly - see tests/test_client_razorpay.py
+# and tests/test_api_webhook.py's own TestClient use). Silenced narrowly by
+# warning class, not by category, so an unrelated deprecation elsewhere in
+# this script still surfaces.
+with warnings.catch_warnings():
+    from starlette.exceptions import StarletteDeprecationWarning
+
+    warnings.filterwarnings("ignore", category=StarletteDeprecationWarning)
+    from fastapi.testclient import TestClient
 
 from disputedesk.api.webhook import (
     app,
@@ -97,6 +109,40 @@ CONTEST_WORTHY_EVENT = {
     },
 }
 
+# Deliberately weak-evidence, low-amount, filed-fast dispute (poor AVS/CVV,
+# unrecognized device, no delivery proof, large IP-geo/billing distance, no
+# order history, a prior dispute already on file) - the opposite feature
+# profile from CONTEST_WORTHY_EVENT above. Shown alongside it so a viewer can
+# see `P(win)` and the policy decision actually move with the input, instead
+# of both demoed disputes displaying the same score.
+WEAK_EVIDENCE_EVENT = {
+    "event": "dispute.created",
+    "payload": {
+        "dispute": {
+            "entity": {
+                "id": "disp_demo_weak_001",
+                "payment_id": "pay_demo_weak_001",
+                "amount": 2200.0,
+                "currency": "INR",
+                "reason_code": "VISA_83",
+                "phase": "chargeback",
+                "status": "open",
+                "avs_match": False,
+                "cvv_match": False,
+                "device_fingerprint_known": False,
+                "delivery_confirmed": False,
+                "prior_order_count": 0,
+                "prior_dispute_count": 2,
+                "ip_geo_billing_distance_km": 4800.0,
+                "days_between_purchase_and_dispute": 1.0,
+                "customer_communication_log": "this isnt me??? never bought this. refund now",
+                "card_network": "Visa",
+                "checkout_hour_of_day": 3,
+            }
+        }
+    },
+}
+
 
 def _train_demo_model():
     print("Training a small in-memory model for this demo (seed=7, n_rows=3000)...")
@@ -157,10 +203,23 @@ def demo_end_to_end(client: TestClient, engine) -> None:
     print("  (no second decision row, no second API call - see the audit row above, unchanged)")
 
 
+def demo_second_dispute(client: TestClient, engine) -> None:
+    print()
+    print("=" * 72)
+    print("3. A second dispute with a very different evidence profile")
+    print("=" * 72)
+    print("  (weak AVS/CVV, unrecognized device, no delivery proof, filed fast,")
+    print("   no order history, a prior dispute on file - contrast with #1 above)")
+    response = client.post("/webhooks/disputes", json=WEAK_EVIDENCE_EVENT)
+    print(f"  POST /webhooks/disputes -> {response.status_code}")
+    print(f"  {response.json()}")
+    _print_audit_trail(engine, "disp_demo_weak_001")
+
+
 def demo_malformed_webhook(client: TestClient) -> None:
     print()
     print("=" * 72)
-    print("3. A malformed webhook (status is not 'open') is rejected, not processed")
+    print("4. A malformed webhook (status is not 'open') is rejected, not processed")
     print("=" * 72)
     bad_event = json.loads(json.dumps(CONTEST_WORTHY_EVENT))
     bad_event["payload"]["dispute"]["entity"]["id"] = "disp_demo_malformed"
@@ -172,7 +231,7 @@ def demo_malformed_webhook(client: TestClient) -> None:
 def demo_failure_path_llm_degrades(client: TestClient, engine) -> None:
     print()
     print("=" * 72)
-    print("4. Failure path 2: the LLM returns invalid output twice in a row")
+    print("5. Failure path 2: the LLM returns invalid output twice in a row")
     print("=" * 72)
     print("   (repair attempt also fails -> deterministic template -> human_review flag)")
     broken_llm = FakeLLMClient(responses=["not json", "still not json"])
@@ -194,7 +253,7 @@ def demo_failure_path_llm_degrades(client: TestClient, engine) -> None:
 def demo_failure_path_timeout_retry() -> None:
     print()
     print("=" * 72)
-    print("5. Failure path 1: the Razorpay API times out, then recovers")
+    print("6. Failure path 1: the Razorpay API times out, then recovers")
     print("=" * 72)
     print("   (exercising the exact disputedesk.retry.call_with_backoff both")
     print("    disputedesk/client/razorpay.py and disputedesk/evidence/llm.py use)")
@@ -261,6 +320,7 @@ def main() -> None:
     client = TestClient(app)
 
     demo_end_to_end(client, engine)
+    demo_second_dispute(client, engine)
     demo_malformed_webhook(client)
     demo_failure_path_llm_degrades(client, engine)
     demo_failure_path_timeout_retry()
