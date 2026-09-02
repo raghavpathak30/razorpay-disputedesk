@@ -75,6 +75,100 @@ this endpoint validates payload *shape* via Pydantic but does not verify an
 `X-Razorpay-Signature` header, so it should not be exposed to the public
 internet without adding that check first).
 
+## Limits
+
+Stated here, above the fold, in the repo's own voice — not softened, not
+buried in a caveats footnote, and not written as though a reviewer found
+these instead of us. Every number below has a `Reproduce:` command in
+`NUMBERS.md`.
+
+**Operating point.** At the configured cost the policy beats "contest
+everything" by **0.66%** (paired mean +11,210 INR/1,000, 95% CI +8,508 to
++13,633, 19 of 20 seeds positive), at a precision of **0.2543** against a
+**0.2377** no-skill floor — recovering 91.6% of the winnable disputes
+(recall 0.9155) at that price. There is **no measurable advantage at all
+below ₹200** per representment (the 95% CI includes zero at ₹0, ₹100, and
+₹150; it is measurably *negative* at ₹50). The advantage becomes measurable
+at ₹200 and grows from there — by ₹2,000 it is +685,586/1,000, by ₹10,000
+it is +7,555,900/1,000. The configured ₹400 sits just above the threshold
+where the effect appears, not deep inside the regime where it is robust.
+
+**Review cost.** The cost sweep above credits every CONTEST decision as
+filed and charges nothing for the human time that isn't. Solving for the
+review cost that exactly cancels the ₹400 advantage gives **≈₹200 per
+human-touched dispute** — against the **₹150** of analyst time
+`disputedesk/policy/config.py` already budgets per *contested* dispute
+alone, before a review is added on top. Put the other way: the sweep
+overstates the advantage by **200.5%** at the configured cost (22,475/1,000
+of overstatement against an 11,210/1,000 reported advantage); charge that
+back and the policy trails baseline A by **−11,265/1,000**, not leads it.
+This is arithmetic over already-recorded numbers, not a new measurement,
+and it does not depend on the grounding gate's own performance.
+
+**Ablation.** One feature — `ip_geo_billing_distance_km` — captures
+**65.8%** of the model's entire measured advantage over "contest
+everything" at the configured cost. The top three features capture
+**68.8%**. The other nine features, combined, add nine points. Above
+≈₹2,000 the restricted models slightly *exceed* the full model's advantage
+(101–102% at ₹4,000–₹10,000) — **reported as unexplained; no mechanism is
+offered, and none was investigated.**
+
+**Loss asymmetry.** At low cost the policy loses harder than it wins, while
+winning more often: the ratio of mean loss (on seeds where it loses) to
+mean gain (on seeds where it wins) is **7.65×** at ₹50, **2.52×** at ₹100,
+and **0.45×** at the configured ₹400 (where it has flipped — the policy now
+wins bigger, not just more often). A majority of seeds improving is not the
+same as the expected value improving, and at ₹50 those two readings
+disagree.
+
+**Every rupee figure above is contingent on a submission path that does not
+exist.** Razorpay's contest endpoint requires at least one document id
+under `action="submit"`; this project has no document-upload pipeline, and
+sends none. A contest this system files today would very likely be
+rejected by the live API. The *comparison* against baseline A is unaffected
+— it files through the same client and inherits the same gap — but every
+absolute "rupees recovered" number describes what the policy *would*
+recover if its filings were accepted, not what it has been shown to
+recover.
+
+**The LLM extraction comparison carries two distinct limits, not one.** At
+n=60 the paired difference between the LLM's typed extraction and a TF-IDF
+baseline was +0.1624 (95% CI −0.0648 to +0.3858, includes zero) — neither
+arm distinguishable from chance. A raised-n re-run was attempted on
+2026-09-03 and did not happen — blocked by the same daily token budget
+exhaustion as the grounding gate below, arithmetic in `DECISIONS.md`. Raising
+n would only fix *that* limit in any case. It would not fix the second: the
+generator's `true_fraud` signal lives entirely in which 3-of-64 combinations
+were drawn from a fixed three-slot, four-phrase-each template
+(`disputedesk/generator/comms.py`), tilted by a small class-conditioned
+weight. Any n scores extraction from that closed vocabulary, not from open
+customer text — a limit on the eval's design, not its sample size, and no
+amount of re-running raises it.
+
+**The audit log is tamper-evident, not tamper-proof, and SQLite-only.**
+`BEFORE UPDATE`/`BEFORE DELETE` triggers and a hash chain stop an ordinary
+session from rewriting or deleting a decision row, and the chain would
+still catch an edit made by something that could drop the triggers — but
+only because the edit would have to rewrite the entire suffix of the log to
+verify clean, since there is no off-box anchor (no periodic publication of
+the head hash) to catch that rewrite itself. The trigger DDL is written and
+tested for SQLite only; a Postgres deployment needs the equivalent DDL (or
+`REVOKE UPDATE, DELETE`) before the append-only claim holds there too.
+
+**The grounding gate is unmeasured.** A key run was attempted on 2026-09-03
+and blocked before a single letter was graded — not by a missing key, but by
+the account's daily token budget (200,000 TPD), spent by a crashed first
+attempt and its retries before a fixed second attempt could run for real. A
+full n=250 measurement needs 750–1,250 API calls: **2.25 to 3.75 days of this
+account's daily budget, not one** (`DECISIONS.md`'s 2026-09-03 "key run:
+blocked" entry has the arithmetic). No corpus was ever drafted, so
+`eval.run_grounding_eval` has nothing to grade and refuses to run —
+`budget_verdict()` is reported on a real measured rate or not at all. The
+economic argument above (the 2.3% budget, the escalate rate alone exhausting
+it at ₹200) does not depend on this measurement and stands regardless of when
+or whether it runs; the gate's own false-flag rate is a separate, still-open
+question.
+
 ## The LLM authority boundary
 
 The LLM is allowed exactly three jobs (`SPEC.md` §2, amended 2026-09-02;
