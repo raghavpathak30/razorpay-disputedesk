@@ -32,7 +32,7 @@ document. Nothing described here is a stub unless explicitly labelled one.
 | Policy engine | Built | `disputedesk/policy/` |
 | Evidence assembler (reason-code map + LLM drafting/normalisation) | Built | `disputedesk/evidence/` |
 | Razorpay Disputes API client (test mode) | Built | `disputedesk/client/` |
-| Append-only audit log | Built | `disputedesk/audit/` |
+| Append-only audit log (DB triggers + hash chain) | Built | `disputedesk/audit/` |
 | FastAPI webhook | Built | `disputedesk/api/` |
 | Demo CLI | Built | `disputedesk/cli/demo.py` |
 | Eval harness (model, business, cost-sensitivity, oracle) | Built | `eval/` |
