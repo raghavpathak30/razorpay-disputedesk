@@ -23,13 +23,15 @@ from disputedesk.audit.models import ApiOutcome, DecisionRecord
 from disputedesk.client.razorpay import RazorpayClient
 from disputedesk.evidence.assembler import assemble_evidence_packet
 from disputedesk.evidence.context import DisputeContext
+from disputedesk.evidence.draft_letter import PROMPT_VERSION as _LETTER_PROMPT_VERSION
+from disputedesk.evidence.letter import DraftedLetter
 from disputedesk.evidence.llm import LLMClient
 from disputedesk.features.build import build_features
 from disputedesk.model.predict import predict_proba
 from disputedesk.policy.config import PolicyConfig
 from disputedesk.policy.engine import Decision, PolicyDecision, decide
 
-_PROMPT_VERSIONS_FOR_CONTEST = "normalize_comms_log_v1,explanation_letter_v1"
+_PROMPT_VERSIONS_FOR_CONTEST = f"normalize_comms_log_v1,{_LETTER_PROMPT_VERSION}"
 
 
 @dataclass(frozen=True)
@@ -96,14 +98,16 @@ class _EvidenceOutcome:
     prompt_version: str | None
     validation_result: str
     human_review_required: bool
-    letter_text: str | None
+    # The letter object, not its text: `_file_if_needed` needs its
+    # `provenance` to decide whether it may be filed at all (defect 0.1).
+    letter: DraftedLetter | None
 
 
 _NO_EVIDENCE = _EvidenceOutcome(
     prompt_version=None,
     validation_result="not_applicable",
     human_review_required=False,
-    letter_text=None,
+    letter=None,
 )
 
 
@@ -119,7 +123,7 @@ def _assemble_evidence_if_contesting(
         prompt_version=_PROMPT_VERSIONS_FOR_CONTEST,
         validation_result="fallback_template_used" if packet.human_review_required else "validated",
         human_review_required=packet.human_review_required,
-        letter_text=packet.explanation_letter.letter_text,
+        letter=packet.explanation_letter,
     )
 
 
@@ -188,7 +192,7 @@ def process_dispute_event(
         return _already_processed_result(session, decision_row)
 
     api_outcome = _file_if_needed(
-        session, razorpay_client, dispute_id, policy_decision, entity.amount, evidence.letter_text
+        session, razorpay_client, dispute_id, policy_decision, entity.amount, evidence.letter
     )
 
     return ProcessResult(
@@ -206,13 +210,44 @@ def _file_if_needed(
     dispute_id: str,
     policy_decision: PolicyDecision,
     amount_inr: float,
-    letter_text: str | None,
+    letter: DraftedLetter | None,
 ) -> ApiOutcome | None:
     if policy_decision.decision == Decision.CONTEST:
-        return _file(session, razorpay_client, dispute_id, "contest", amount_inr, letter_text)
+        if letter is None or not letter.submittable:
+            return _withhold_for_review(session, dispute_id, letter)
+        return _file(session, razorpay_client, dispute_id, "contest", amount_inr, letter)
     if policy_decision.decision == Decision.ACCEPT:
         return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None)
     return None  # ESCALATE: no API call - a human decides. Nothing to file yet.
+
+
+def _withhold_for_review(
+    session: Session, dispute_id: str, letter: DraftedLetter | None
+) -> ApiOutcome:
+    """The policy engine said contest, but the letter is not the model's own
+    validated output - a deterministic fallback, or text that had to be
+    shortened. Nothing is filed and no network call is made; the dispute is
+    recorded as awaiting a person (defect 0.1).
+
+    Deliberately *not* re-decided as accept: accepting is irreversible
+    (Razorpay's accept endpoint moves the dispute straight to "lost"), and a
+    letter-drafting failure is no evidence at all about whether this dispute
+    is winnable. The policy branch on the decision row still reads "contest",
+    because that is what the policy engine decided - what changed is that the
+    evidence packet was not fit to file, which is a separate fact and is
+    recorded as one.
+    """
+    provenance = letter.provenance.value if letter is not None else "missing"
+    return record_api_outcome(
+        session,
+        dispute_id=dispute_id,
+        action="contest",
+        outcome="withheld_for_review",
+        error=(
+            f"explanation letter provenance is {provenance!r}, not 'model'; "
+            "queued for human review instead of being submitted"
+        ),
+    )
 
 
 def _file(
@@ -221,7 +256,7 @@ def _file(
     dispute_id: str,
     action: str,
     amount_inr: float,
-    summary: str | None,
+    letter: DraftedLetter | None,
 ) -> ApiOutcome:
     """Call the Razorpay client for `action` (retry/backoff on timeout or
     429 already happens inside the client - see
@@ -235,7 +270,9 @@ def _file(
     """
     try:
         if action == "contest":
-            response = razorpay_client.contest(dispute_id, amount_inr, summary or "")
+            # `letter` is non-None and submittable here - `_file_if_needed`
+            # withholds anything else before reaching this function.
+            response = razorpay_client.contest(dispute_id, amount_inr, letter)
         else:
             response = razorpay_client.accept(dispute_id)
     except Exception as error:  # noqa: BLE001 - genuinely any failure must degrade, not crash

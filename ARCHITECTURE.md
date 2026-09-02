@@ -250,7 +250,12 @@ HTTP 429 under rate limits during an eval run, which is what made the
   path, so `contest()` submits the drafted letter as `summary` text only
   and records `required_evidence_types` in the audit log for a human to
   attach files against, rather than inventing document ids for files that
-  don't exist.
+  don't exist. Razorpay's contest documentation (re-read 2026-09-02) states
+  that `action="submit"` requires at least one document id across the
+  evidence fields — so a real submit from this system would likely be
+  *rejected* by the live API, not merely incomplete. Recorded in
+  `DECISIONS.md`'s 2026-09-02 entry of the same name; untested against the
+  live API.
 - **No order-context lookup.** The webhook assumes order-context fields
   (`avs_match` through `checkout_hour_of_day`) arrive already joined onto
   the dispute payload; a real deployment needs to build that join from the

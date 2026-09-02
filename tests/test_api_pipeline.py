@@ -103,7 +103,10 @@ def test_contest_path_assembles_evidence_and_files_via_the_client(session, monke
     assert result.policy_decision.decision == Decision.CONTEST
     assert result.decision_row.validation_result == "validated"
     assert result.decision_row.human_review_required is False
-    assert razorpay.contest_calls == [("disp_1", 5000.0, "y" * 80)]
+    dispute_id, amount, letter = razorpay.contest_calls[0]
+    assert (dispute_id, amount) == ("disp_1", 5000.0)
+    assert letter.letter_text == "y" * 80
+    assert letter.submittable is True
     assert razorpay.accept_calls == []
     assert result.api_outcome.outcome == "success"
 
@@ -150,7 +153,7 @@ def test_decision_row_exists_before_the_api_call_is_made(session, monkeypatch):
         def accept(self, dispute_id):
             raise AssertionError("accept should not be called for this test")
 
-        def contest(self, dispute_id, amount_inr, summary):
+        def contest(self, dispute_id, amount_inr, letter):
             seen["decision_persisted_at_call_time"] = get_decision(session, dispute_id) is not None
             raise httpx.TimeoutException("simulated - retries already exhausted inside the client")
 
@@ -181,7 +184,13 @@ def test_replayed_event_does_not_call_the_api_a_second_time(session, monkeypatch
     assert result2.policy_decision.p_win == result1.policy_decision.p_win
 
 
-def test_llm_failure_degrades_to_template_and_flags_human_review(session, monkeypatch):
+def test_llm_failure_degrades_to_template_and_withholds_it_from_filing(session, monkeypatch):
+    """SPEC.md §7 failure path 2: the system degrades, it does not crash. What
+    changed on 2026-09-02 is what "degrades" means at the filing step - the
+    template letter is *not* submitted to the card network any more, because
+    its own body says a person has not reviewed it (defect 0.1). The dispute
+    is recorded as awaiting review instead.
+    """
     _mock_p_win(monkeypatch, 0.9)
     llm = FakeLLMClient(responses=["not json", "still not json"])  # repair also fails
     razorpay = FakeRazorpayClient()
@@ -190,9 +199,9 @@ def test_llm_failure_degrades_to_template_and_flags_human_review(session, monkey
 
     assert result.decision_row.human_review_required is True
     assert result.decision_row.validation_result == "fallback_template_used"
-    # Degrades, does not crash: the (template) letter still gets filed.
-    assert result.api_outcome.outcome == "success"
-    assert razorpay.contest_calls[0][0] == "disp_1"
+    assert result.api_outcome.outcome == "withheld_for_review"
+    assert razorpay.contest_calls == []
+    assert razorpay.accept_calls == []  # never silently accepted either
 
 
 def test_features_used_are_recorded_on_the_decision_row(session, monkeypatch):
@@ -224,7 +233,7 @@ def test_replayed_event_after_an_api_failure_does_not_retry_via_the_pipeline(ses
         def accept(self, dispute_id):
             raise AssertionError
 
-        def contest(self, dispute_id, amount_inr, summary):
+        def contest(self, dispute_id, amount_inr, letter):
             self.contest_calls.append(dispute_id)
             raise httpx.TimeoutException("simulated - retries exhausted")
 

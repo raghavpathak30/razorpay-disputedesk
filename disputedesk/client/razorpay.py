@@ -33,10 +33,24 @@ SPEC.md or PHASES.md - out of scope). `contest()` therefore never populates
 the per-evidence-type document-id list fields (`shipping_proof`,
 `billing_proof`, ...): doing so would mean inventing document ids that do
 not correspond to any real uploaded file, which is worse than omitting them.
-It submits the drafted `explanation_letter` text as `summary` (truncated to
-the API's documented 1000-character limit) with `action="submit"`; the
-`required_evidence_types` the evidence assembler computed are recorded in
-the audit log for a human reviewer, not attached as files here.
+It submits the drafted `explanation_letter` text as `summary` with
+`action="submit"`; the `required_evidence_types` the evidence assembler
+computed are recorded in the audit log for a human reviewer, not attached as
+files here.
+
+`contest()` takes a `DraftedLetter`, not a `str` (2026-09-02 remediation,
+defect 0.1). Two things follow from that type, both of which this module used
+to get wrong:
+
+- Only a letter with `provenance == "model"` may be filed. The check runs
+  here, inside the client and before the request is built, so it holds even
+  for a caller that bypasses `disputedesk/api/pipeline.py`. Until this change
+  the deterministic fallback letter - whose own body says it has not been
+  reviewed by a person - was filed with `action="submit"`.
+- The letter's text is already bounded by the network's documented 1,000
+  character `summary` limit at construction, so this module no longer
+  truncates. Until this change it sent `summary[:1000]` of a letter drafted
+  against a 4,000-character ceiling.
 """
 
 import time
@@ -46,9 +60,8 @@ from typing import Protocol
 import httpx
 
 from disputedesk.config import get_settings
+from disputedesk.evidence.letter import DraftedLetter, require_submittable
 from disputedesk.retry import call_with_backoff
-
-_CONTEST_SUMMARY_MAX_CHARS = 1000  # documented limit, contest()'s `summary` field
 
 
 class RazorpayClient(Protocol):
@@ -57,10 +70,12 @@ class RazorpayClient(Protocol):
         dispute entity (irreversible - real status moves to "lost")."""
         ...
 
-    def contest(self, dispute_id: str, amount_inr: float, summary: str) -> dict:
+    def contest(self, dispute_id: str, amount_inr: float, letter: DraftedLetter) -> dict:
         """PATCH the contest action for `dispute_id` with the full disputed
-        `amount_inr` and the drafted explanation letter as `summary`.
-        Returns the parsed dispute entity."""
+        `amount_inr` and `letter` as `summary`. Implementations must call
+        `require_submittable(letter)` before any network work, so an
+        unreviewed letter cannot be filed. Returns the parsed dispute
+        entity."""
         ...
 
 
@@ -83,7 +98,7 @@ class FakeRazorpayClient:
             {"id": "disp_fake", "status": "under_review"}
         ]
         self.accept_calls: list[str] = []
-        self.contest_calls: list[tuple[str, float, str]] = []
+        self.contest_calls: list[tuple[str, float, DraftedLetter]] = []
 
     @staticmethod
     def _next(queue: list[dict | Exception], index: int) -> dict:
@@ -97,9 +112,14 @@ class FakeRazorpayClient:
         self.accept_calls.append(dispute_id)
         return self._next(self._accept_responses, index)
 
-    def contest(self, dispute_id: str, amount_inr: float, summary: str) -> dict:
+    def contest(self, dispute_id: str, amount_inr: float, letter: DraftedLetter) -> dict:
+        # Same gate as `RazorpayHttpClient`, deliberately duplicated rather
+        # than left to the real client alone: the demo script and most tests
+        # run against this fake, so a laxer fake would let the defect 0.1
+        # invariant be re-opened by a path only they exercise.
+        require_submittable(letter)
         index = len(self.contest_calls)
-        self.contest_calls.append((dispute_id, amount_inr, summary))
+        self.contest_calls.append((dispute_id, amount_inr, letter))
         return self._next(self._contest_responses, index)
 
 
@@ -147,10 +167,14 @@ class RazorpayHttpClient:
     def accept(self, dispute_id: str) -> dict:
         return self._call("POST", f"/disputes/{dispute_id}/accept", None)
 
-    def contest(self, dispute_id: str, amount_inr: float, summary: str) -> dict:
+    def contest(self, dispute_id: str, amount_inr: float, letter: DraftedLetter) -> dict:
+        # Raises `LetterNotSubmittableError` before the request body exists,
+        # let alone a socket - see this module's docstring and
+        # `disputedesk/evidence/letter.py`.
+        require_submittable(letter)
         body = {
             "amount": round(amount_inr * 100),  # rupees -> paise, at this boundary only
-            "summary": summary[:_CONTEST_SUMMARY_MAX_CHARS],
+            "summary": letter.letter_text,  # never truncated - bounded at construction
             "action": "submit",
         }
         return self._call("PATCH", f"/disputes/{dispute_id}/contest", body)

@@ -8,10 +8,11 @@ from pydantic import BaseModel, ConfigDict
 
 from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.draft_letter import draft_explanation_letter
+from disputedesk.evidence.letter import DraftedLetter
 from disputedesk.evidence.llm import LLMClient
 from disputedesk.evidence.normalize_comms import normalize_communication_log
 from disputedesk.evidence.reason_code_map import required_evidence_types
-from disputedesk.evidence.schemas import ExplanationLetterOutput, NormalizedCommunicationLog
+from disputedesk.evidence.schemas import NormalizedCommunicationLog
 
 
 class EvidencePacket(BaseModel):
@@ -20,7 +21,11 @@ class EvidencePacket(BaseModel):
     reason_code: str
     required_evidence_types: tuple[str, ...]
     normalized_comms: NormalizedCommunicationLog
-    explanation_letter: ExplanationLetterOutput
+    explanation_letter: DraftedLetter
+    # True if a person must read this packet before anything is filed. For
+    # the letter this is not a second, separately-maintained flag: it is read
+    # off the letter's own provenance, so a non-`MODEL` letter can never be
+    # paired with `human_review_required=False`.
     human_review_required: bool
 
 
@@ -35,16 +40,12 @@ def assemble_evidence_packet(
     evidence_types = required_evidence_types(context.reason_code)
 
     comms_result = normalize_communication_log(raw_communication_log, llm_client)
-    letter_result = draft_explanation_letter(
-        context, evidence_types, comms_result.normalized, llm_client
-    )
+    letter = draft_explanation_letter(context, evidence_types, comms_result.normalized, llm_client)
 
     return EvidencePacket(
         reason_code=context.reason_code,
         required_evidence_types=evidence_types,
         normalized_comms=comms_result.normalized,
-        explanation_letter=letter_result.letter,
-        human_review_required=(
-            comms_result.human_review_required or letter_result.human_review_required
-        ),
+        explanation_letter=letter,
+        human_review_required=(comms_result.human_review_required or not letter.submittable),
     )

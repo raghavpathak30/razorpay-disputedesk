@@ -12,6 +12,19 @@ import httpx
 import pytest
 
 from disputedesk.client.razorpay import FakeRazorpayClient, RazorpayHttpClient
+from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
+
+
+def _model_letter(text: str = "a fully drafted, model-authored explanation letter body."):
+    """A submittable letter. `contest()` takes a `DraftedLetter`, not a
+    string, so that only the model's own validated output can be filed -
+    see `disputedesk/evidence/letter.py`.
+    """
+    return DraftedLetter(
+        letter_text=text,
+        cites_evidence_types=("billing_proof",),
+        provenance=LetterProvenance.MODEL,
+    )
 
 RAZORPAY_KEY_ID = "rzp_test_id"
 RAZORPAY_KEY_SECRET = "rzp_test_secret"
@@ -71,7 +84,7 @@ def test_accept_sends_basic_auth_and_no_body(monkeypatch):
     assert seen["auth_header"] == expected_auth
 
 
-def test_contest_sends_amount_in_paise_and_truncated_summary(monkeypatch):
+def test_contest_sends_amount_in_paise_and_the_letter_body_untouched(monkeypatch):
     seen = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -83,15 +96,20 @@ def test_contest_sends_amount_in_paise_and_truncated_summary(monkeypatch):
     _patch_transport(monkeypatch, httpx.MockTransport(handler))
     client = RazorpayHttpClient()
 
-    long_summary = "y" * 2000
-    result = client.contest("disp_2", amount_inr=650.50, summary=long_summary)
+    # At the network's documented ceiling exactly: this is the longest letter
+    # that can exist, since `DraftedLetter` rejects anything longer at
+    # construction. Nothing here truncates it - until 2026-09-02 this client
+    # sent `summary[:1000]` of a letter drafted against a 4,000-character
+    # schema, silently discarding most of the evidence (defect 0.2).
+    body = "y" * 1000
+    result = client.contest("disp_2", amount_inr=650.50, letter=_model_letter(body))
 
     assert result == {"id": "disp_2", "status": "under_review"}
     assert seen["method"] == "PATCH"
     assert seen["url"] == "https://api.razorpay.com/v1/disputes/disp_2/contest"
     assert seen["json"]["amount"] == 65050  # rupees -> paise
     assert seen["json"]["action"] == "submit"
-    assert len(seen["json"]["summary"]) == 1000
+    assert seen["json"]["summary"] == body
 
 
 def test_timeout_then_success_files_exactly_once(monkeypatch):
@@ -107,7 +125,7 @@ def test_timeout_then_success_files_exactly_once(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda _s: None)
     client = RazorpayHttpClient(max_retries=3)
 
-    result = client.contest("disp_3", amount_inr=1000.0, summary="explanation")
+    result = client.contest("disp_3", amount_inr=1000.0, letter=_model_letter())
 
     assert responses_sent["n"] == 2  # one timeout, one success - never a third
     assert result == {"id": "disp_3", "status": "under_review"}
@@ -182,9 +200,9 @@ def test_fake_client_queues_an_exception_then_a_response():
     )
 
     with pytest.raises(httpx.TimeoutException):
-        fake.contest("disp_fake", 100.0, "summary")
+        fake.contest("disp_fake", 100.0, _model_letter())
 
-    result = fake.contest("disp_fake", 100.0, "summary")
+    result = fake.contest("disp_fake", 100.0, _model_letter())
     assert result == {"id": "disp_fake", "status": "under_review"}
     assert len(fake.contest_calls) == 2
 
@@ -192,7 +210,8 @@ def test_fake_client_queues_an_exception_then_a_response():
 def test_fake_client_records_calls_made():
     fake = FakeRazorpayClient()
     fake.accept("disp_a")
-    fake.contest("disp_b", 500.0, "why")
+    letter = _model_letter()
+    fake.contest("disp_b", 500.0, letter)
 
     assert fake.accept_calls == ["disp_a"]
-    assert fake.contest_calls == [("disp_b", 500.0, "why")]
+    assert fake.contest_calls == [("disp_b", 500.0, letter)]

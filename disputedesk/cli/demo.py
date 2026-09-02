@@ -277,7 +277,9 @@ def demo_failure_path_llm_degrades(client: TestClient, engine) -> None:
     print("=" * 72)
     print("5. Failure path 2: the LLM returns invalid output twice in a row")
     print("=" * 72)
-    print("   (repair attempt also fails -> deterministic template -> human_review flag)")
+    print("   (repair attempt also fails -> deterministic template -> human_review flag,")
+    print("    and the template letter is WITHHELD from the card network: only a letter")
+    print("    the model itself drafted and validated can reach action='submit')")
     broken_llm = FakeLLMClient(responses=["not json", "still not json"])
     app.dependency_overrides[get_llm_client] = lambda: broken_llm
 
@@ -286,7 +288,7 @@ def demo_failure_path_llm_degrades(client: TestClient, engine) -> None:
     response = client.post("/webhooks/disputes", json=event)
     print(f"  POST /webhooks/disputes -> {response.status_code}")
     print(f"  {response.json()}")
-    print("  the system did not crash; it degraded to a template letter:")
+    print("  the system did not crash; it degraded to a template letter, unfiled:")
     _print_audit_trail(engine, "disp_demo_llm_fallback")
 
     app.dependency_overrides[get_llm_client] = lambda: FakeLLMClient(
