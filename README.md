@@ -36,10 +36,11 @@ Every number below is measured on a fully synthetic, documented dataset (see
 "What this dataset cannot tell you" below) — there is no real Razorpay
 merchant data anywhere in this project.
 
-Phases 0 through 4 (`PHASES.md`) are complete. The Phase 5 freeze declared
-on 2026-09-01 was reopened on 2026-09-02 to add one AI surface — the
-grounding gate — and **re-frozen on 2026-09-02**. `DECISIONS.md` records why
-the freeze was reopened and why for that surface only. Nothing described here
+Phases 0 through 4 (`PHASES.md`) are complete. The Phase 5 freeze declared on
+2026-09-01 was reopened on 2026-09-02 to add one AI surface — the grounding
+gate — and reopened again on 2026-09-03 for documentation and audit work
+only (no new capability; **re-frozen on 2026-09-03**). `DECISIONS.md` records
+why the freeze was reopened each time and why. Nothing described here
 is a stub unless explicitly labelled one.
 
 ## What exists

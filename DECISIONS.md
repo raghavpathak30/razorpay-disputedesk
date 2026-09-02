@@ -3236,3 +3236,45 @@ estimate) supersedes it.
 
 **Status:** BLOCKED (external, account-level, resets on Groq's own daily
 cycle — not a defect in this codebase). Arithmetic: DECIDED.
+
+---
+
+## 2026-09-03 — Phase 5 freeze reopened for Phase 3 documentation and audit work, and re-frozen
+
+**Decision:** the Phase 5 freeze (declared 2026-09-01, reopened and
+re-frozen once already on 2026-09-02 for the grounding gate) is reopened for
+today's work and **re-frozen on 2026-09-03**.
+
+**What reopened it, and why none of it is new capability:**
+
+- The stale-number audit, single-feature ablation, and the eval-design limit
+  on the extraction comparison (Phase 2 addendum, earlier commits today) —
+  measurement and documentation work: re-running existing harnesses, adding
+  a generator fingerprint test, correcting recorded figures. No production
+  code path changed behaviour.
+- Phase 3's write-up: `README.md`'s top-line description corrected to state
+  the document-upload gap in the opening paragraph rather than as a
+  footnote; a `Limits` section consolidating figures that already existed
+  elsewhere in the repo; `NUMBERS.md` and `Makefile` (`make verify`,
+  `make verify-key`) mapping every numeric claim to its reproduce command;
+  `docs/QA-PREP.md`. All documentation - nothing here is a code path.
+- Two bug fixes, found while attempting the key run and made necessary by
+  it, not chosen freely: `eval/run_grounding_draft.py` now checkpoints
+  incrementally instead of losing all progress to any interruption, and
+  `eval/grounding_eval.py`'s `_as_letter` no longer routes corpus text
+  through `DraftedLetter`'s submission-length validation, which crashed
+  grading on any mutated letter over 1,000 characters. Both are `eval/`-only
+  - measurement tooling, not `disputedesk/` production code, and both were
+  required to make an *already-declared* capability (the grounding-gate
+  measurement Phase 5's 2026-09-02 reopening already approved) actually
+  runnable, not to add a new one.
+- The key run itself did not complete (see the 2026-09-03 "key run: blocked"
+  entry) - no measurement was added, and none of today's changes depend on
+  one having happened.
+
+**What did not change:** no new AI surface, no new production code path, no
+change to `disputedesk/policy/`, `disputedesk/evidence/grounding.py`, or any
+decision-making code. `docs/AI-SURFACE.md`'s ranking and the four killed
+candidates are untouched.
+
+**Status:** DECIDED.
