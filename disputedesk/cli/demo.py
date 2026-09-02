@@ -74,7 +74,6 @@ from disputedesk.generator.config import GeneratorConfig
 from disputedesk.generator.pipeline import generate_dataset, temporal_split
 from disputedesk.model.config import ModelConfig
 from disputedesk.model.train import train
-from disputedesk.retry import call_with_backoff
 
 DEMO_MODEL_VERSION = "demo-lgbm-v1-seed7"
 
@@ -173,6 +172,13 @@ WEAK_EVIDENCE_EVENT = {
 RETRY_AFTER_EVENT = json.loads(json.dumps(CONTEST_WORTHY_EVENT))
 RETRY_AFTER_EVENT["payload"]["dispute"]["entity"]["id"] = "disp_demo_429_recover"
 RETRY_AFTER_EVENT["payload"]["dispute"]["entity"]["payment_id"] = "pay_demo_429_recover"
+
+# Same shape again for the timeout step (step 6), which since 2026-09-02 runs
+# the real client over the real route rather than calling the retry helper on a
+# local closure - so it needs its own dispute id like every other filed step.
+TIMEOUT_RECOVER_EVENT = json.loads(json.dumps(CONTEST_WORTHY_EVENT))
+TIMEOUT_RECOVER_EVENT["payload"]["dispute"]["entity"]["id"] = "disp_demo_timeout_recover"
+TIMEOUT_RECOVER_EVENT["payload"]["dispute"]["entity"]["payment_id"] = "pay_demo_timeout_recover"
 
 # Placeholder credentials for this step only - RazorpayHttpClient.__init__
 # reads them via get_settings(), but the transport is stubbed below, so
@@ -313,37 +319,62 @@ def demo_failure_path_llm_degrades(client: TestClient, engine) -> None:
     )
 
 
-def demo_failure_path_timeout_retry() -> None:
+def _make_timeout_then_200_handler(dispute_id: str):
+    """An `httpx.MockTransport` handler that raises a real `ReadTimeout` on the
+    first call and returns 200 on every call after.
+
+    The failure is injected at the transport layer, so `RazorpayHttpClient`
+    builds a real request, hands it to `httpx`, and gets a real timeout
+    exception back out of it - the same code path a dead network would take.
+    Returns the handler plus the shared call counter.
+    """
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            print("  attempt 1: the request times out (httpx.ReadTimeout from the transport)")
+            raise httpx.ReadTimeout("simulated read timeout", request=request)
+        print(f"  attempt {calls['n']}: Razorpay responds 200")
+        return httpx.Response(200, json={"id": dispute_id, "status": "under_review"})
+
+    return handler, calls
+
+
+def demo_failure_path_timeout_retry(client: TestClient, engine, fake_razorpay) -> None:
     print()
     print("=" * 72)
     print("6. Failure path 1: the Razorpay API times out, then recovers")
     print("=" * 72)
-    print("   (exercising the exact disputedesk.retry.call_with_backoff both")
-    print("    disputedesk/client/razorpay.py and disputedesk/evidence/llm.py use)")
+    print("   (a real httpx.ReadTimeout is raised by the transport underneath the")
+    print("    real RazorpayHttpClient, reached over the real webhook route - not a")
+    print("    local closure standing in for the client. disputedesk.retry.")
+    print("    call_with_backoff retries and the dispute is filed exactly once.)")
 
-    attempts = {"n": 0}
+    handler, calls = _make_timeout_then_200_handler("disp_demo_timeout_recover")
+    transport = httpx.MockTransport(handler)
 
-    def flaky_call() -> str:
-        attempts["n"] += 1
-        if attempts["n"] == 1:
-            raise httpx.ConnectTimeout("simulated network timeout")
-        return "under_review"
+    def _routed_request(method, url, **kwargs):
+        with httpx.Client(transport=transport) as http_client:
+            return http_client.request(method, url, **kwargs)
 
-    def on_attempt(attempt_number: int, outcome: str, error: Exception | None) -> None:
-        if outcome == "timeout_retry":
-            print(f"  attempt {attempt_number}: timed out ({error!r}) - backing off and retrying")
-        elif outcome == "success":
-            print(f"  attempt {attempt_number}: succeeded")
+    with mock.patch.dict(os.environ, _DEMO_SETTINGS_ENV, clear=False):
+        get_settings.cache_clear()
+        real_razorpay = RazorpayHttpClient(
+            sleep_fn=_make_compressed_sleep_fn(
+                "exponential backoff - a timeout carries no Retry-After header to honour"
+            )
+        )
+        with mock.patch("httpx.request", _routed_request):
+            app.dependency_overrides[get_razorpay_client] = lambda: real_razorpay
+            response = client.post("/webhooks/disputes", json=TIMEOUT_RECOVER_EVENT)
+        app.dependency_overrides[get_razorpay_client] = lambda: fake_razorpay
+    get_settings.cache_clear()
 
-    result = call_with_backoff(
-        flaky_call,
-        max_retries=3,
-        base_delay_seconds=0.01,  # demo-fast; production default is 0.5s
-        sleep_fn=lambda _seconds: None,
-        on_attempt=on_attempt,
-    )
-    print(f"  final result after recovery: status={result!r}")
-    print(f"  total attempts made: {attempts['n']} (filed exactly once, not once per attempt)")
+    print(f"  POST /webhooks/disputes -> {response.status_code}")
+    print(f"  {response.json()}")
+    print(f"  total attempts made against Razorpay: {calls['n']} (filed exactly once)")
+    _print_audit_trail(engine, "disp_demo_timeout_recover")
 
 
 def _make_429_then_200_handler(retry_after_seconds: str, dispute_id: str):
@@ -366,17 +397,28 @@ def _make_429_then_200_handler(retry_after_seconds: str, dispute_id: str):
     return handler, responses_sent
 
 
-def _compressed_sleep_fn(seconds: float) -> None:
-    """`RazorpayHttpClient`'s injected `sleep_fn` for this demo step: prints
-    the real honoured interval `call_with_backoff` passed in, then sleeps a
-    compressed fraction of it so the demo doesn't actually wait 3 seconds.
+def _make_compressed_sleep_fn(what_the_interval_is: str):
+    """Build `RazorpayHttpClient`'s injected `sleep_fn` for a demo step: it
+    prints the real interval `call_with_backoff` passed in, then sleeps a
+    compressed fraction of it so the demo doesn't actually wait.
+
+    `what_the_interval_is` is a parameter rather than a fixed string because
+    the two failure steps produce that interval for different reasons - step 7
+    honours Razorpay's `Retry-After` header, step 6 has no header to honour and
+    falls back to exponential backoff. Printing "the honoured Retry-After
+    value" on a timeout would be narrating something that did not happen, which
+    is the same defect this step was fixed for on 2026-09-02.
     """
-    print(
-        f"  call_with_backoff sleeps {seconds:.1f}s (the honoured Retry-After "
-        f"value - matches the header above) - compressed to "
-        f"{seconds * _DEMO_SLEEP_COMPRESSION:.3f}s of real wall-clock time for this demo"
-    )
-    time.sleep(seconds * _DEMO_SLEEP_COMPRESSION)
+
+    def _sleep(seconds: float) -> None:
+        print(
+            f"  call_with_backoff sleeps {seconds:.1f}s ({what_the_interval_is}) - "
+            f"compressed to {seconds * _DEMO_SLEEP_COMPRESSION:.3f}s of real "
+            "wall-clock time for this demo"
+        )
+        time.sleep(seconds * _DEMO_SLEEP_COMPRESSION)
+
+    return _sleep
 
 
 def demo_failure_path_429_retry_after(
@@ -406,7 +448,11 @@ def demo_failure_path_429_retry_after(
     # `mock.patch.dict` restores the exact prior environment on exit.
     with mock.patch.dict(os.environ, _DEMO_SETTINGS_ENV, clear=False):
         get_settings.cache_clear()
-        real_razorpay = RazorpayHttpClient(sleep_fn=_compressed_sleep_fn)
+        real_razorpay = RazorpayHttpClient(
+            sleep_fn=_make_compressed_sleep_fn(
+                "the honoured Retry-After value - matches the header above"
+            )
+        )
         with mock.patch("httpx.request", _routed_request):
             app.dependency_overrides[get_razorpay_client] = lambda: real_razorpay
             response = client.post("/webhooks/disputes", json=RETRY_AFTER_EVENT)
@@ -575,7 +621,7 @@ def main() -> None:
     demo_second_dispute(client, engine)
     demo_malformed_webhook(client)
     demo_failure_path_llm_degrades(client, engine)
-    demo_failure_path_timeout_retry()
+    demo_failure_path_timeout_retry(client, engine, fake_razorpay)
     demo_failure_path_429_retry_after(client, engine, fake_razorpay)
 
     if args.deterministic_only:

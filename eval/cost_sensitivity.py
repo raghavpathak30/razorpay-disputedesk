@@ -67,6 +67,8 @@ both held fixed across this sweep. Reported per cost anyway, not hardcoded
 once, so that invariance is a measured fact, not an assumption.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import precision_score, recall_score
@@ -296,6 +298,65 @@ def summarize_sweep(results: pd.DataFrame, random_state: int = 0) -> pd.DataFram
         )
     ]
     return summary
+
+
+@dataclass(frozen=True)
+class LossTail:
+    """The shape of the per-seed difference distribution at one swept cost.
+
+    Reported because a paired mean and a sign count can point in opposite
+    directions, and when they do the reason is always in this shape. At ₹50 the
+    mean is negative while a majority of seeds are positive: the policy wins
+    slightly more often than it loses and loses far harder when it does. That
+    asymmetry is a property of the policy worth stating in its own voice, not
+    an artifact to average away.
+    """
+
+    representment_cost_inr: float
+    n_seeds: int
+    n_positive: int
+    n_negative: int
+    mean_difference: float
+    worst_seed_difference: float
+    best_seed_difference: float
+    mean_loss_on_losing_seeds: float
+    mean_gain_on_winning_seeds: float
+
+    @property
+    def spread(self) -> float:
+        return self.best_seed_difference - self.worst_seed_difference
+
+    @property
+    def loss_to_gain_ratio(self) -> float:
+        """How many times larger the average loss is than the average gain.
+        `inf` when no seed wins; 0.0 when none loses."""
+        if self.mean_gain_on_winning_seeds == 0.0:
+            return float("inf") if self.mean_loss_on_losing_seeds != 0.0 else 0.0
+        return abs(self.mean_loss_on_losing_seeds) / self.mean_gain_on_winning_seeds
+
+
+def loss_tail(results: pd.DataFrame, cost: float) -> LossTail:
+    """The per-seed advantage distribution at one swept `cost`."""
+    at_cost = results[results["representment_cost_inr"] == cost].sort_values("seed")
+    if at_cost.empty:
+        raise ValueError(f"no swept rows at representment_cost_inr={cost}")
+    differences = (
+        at_cost["policy_recovered_per_1000_inr"] - at_cost["baseline_a_recovered_per_1000_inr"]
+    ).to_numpy()
+
+    losing = differences[differences < 0]
+    winning = differences[differences > 0]
+    return LossTail(
+        representment_cost_inr=cost,
+        n_seeds=int(differences.size),
+        n_positive=int(winning.size),
+        n_negative=int(losing.size),
+        mean_difference=float(differences.mean()),
+        worst_seed_difference=float(differences.min()),
+        best_seed_difference=float(differences.max()),
+        mean_loss_on_losing_seeds=float(losing.mean()) if losing.size else 0.0,
+        mean_gain_on_winning_seeds=float(winning.mean()) if winning.size else 0.0,
+    )
 
 
 def fixed_seed_set(n_seeds: int, start: int = 0) -> list[int]:

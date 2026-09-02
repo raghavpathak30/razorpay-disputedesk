@@ -120,7 +120,7 @@ def test_batch_auc_matches_sklearn_including_on_tie_heavy_input(n_distinct_score
     """
     from sklearn.metrics import roc_auc_score
 
-    from eval.extraction_comparison import _auc_batch
+    from eval.auc import auc_batch
 
     rng = np.random.default_rng(4)
     rows = 25
@@ -130,19 +130,19 @@ def test_batch_auc_matches_sklearn_including_on_tie_heavy_input(n_distinct_score
     y[:, 1] = 0
     scores = rng.integers(0, n_distinct_scores, size=(rows, n)).astype(float)
 
-    batch = _auc_batch(y, scores)
+    batch = auc_batch(y, scores)
     reference = np.array([roc_auc_score(y[i], scores[i]) for i in range(rows)])
 
     assert np.allclose(batch, reference)
 
 
 def test_batch_auc_returns_nan_for_a_single_class_row():
-    from eval.extraction_comparison import _auc_batch
+    from eval.auc import auc_batch
 
     y = np.array([[1, 1, 1, 1]])
     scores = np.array([[0.1, 0.2, 0.3, 0.4]])
 
-    assert np.isnan(_auc_batch(y, scores)).all()
+    assert np.isnan(auc_batch(y, scores)).all()
 
 
 # --------------------------------------------------------------------------
@@ -155,10 +155,10 @@ def test_a_constant_score_vector_has_auc_exactly_one_half():
     """The construction `auc_vs_chance` relies on: all scores tied gives every
     item the same average rank, so AUC is exactly 0.5, not approximately.
     """
-    from eval.extraction_comparison import _auc_batch
+    from eval.auc import auc_batch
 
     y = np.array([[1, 0, 1, 0, 0, 1]])
-    assert _auc_batch(y, np.zeros_like(y, dtype=float))[0] == pytest.approx(0.5)
+    assert auc_batch(y, np.zeros_like(y, dtype=float))[0] == pytest.approx(0.5)
 
 
 def test_a_perfect_arm_is_distinguishable_from_chance():

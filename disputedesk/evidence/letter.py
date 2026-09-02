@@ -57,6 +57,18 @@ class LetterProvenance(Enum):
     """Text that had to be altered to fit the network limit, or is otherwise
     not the model's own validated output. Human review, never submission."""
 
+    FAILED_GROUNDING = "failed_grounding"
+    """The letter is the model's own validated output, but the grounding gate
+    (`disputedesk/evidence/grounding.py`) could not trace every factual
+    assertion in it back to a field of the dispute record - or could not reach
+    a verdict at all. Human review, never submission.
+
+    Distinct from `FALLBACK` on purpose. `FALLBACK` means drafting failed and
+    there is no model letter; this means a model letter exists and says
+    something the record does not support, which is a different thing for a
+    person to be handed. Both are non-`MODEL`, so both inherit the submission
+    ban above with no new code at the client boundary."""
+
 
 class LetterNotSubmittableError(RuntimeError):
     """Raised when a letter that is not `provenance == "model"` reaches a

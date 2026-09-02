@@ -18,7 +18,13 @@ from disputedesk.generator.latents import (
     draw_timestamps,
 )
 from disputedesk.generator.probability import compute_p
-from disputedesk.generator.schema import DebugRecord, DisputeRecord, assign_schema_fields
+from disputedesk.generator.schema import (
+    DISPUTE_FRAME_COLUMNS,
+    LATENT_FRAME_COLUMNS,
+    DebugRecord,
+    DisputeRecord,
+    assign_schema_fields,
+)
 
 
 def draw_label(rng: np.random.Generator, p: np.ndarray) -> np.ndarray:
@@ -86,6 +92,13 @@ def generate_dataset(
 
     features_df = pd.DataFrame({**plumbing, **features, "won_if_contested": label})
     debug_df = _build_debug_df(plumbing, p, latents, continuous)
+
+    # The provenance half of the leakage guard, asserted at the boundary that
+    # produces the frames rather than only where they are consumed
+    # (`eval/leakage.py` guard (a)). Set *equality*: a latent that found its
+    # way into the feature frame fails here, at the source.
+    assert set(features_df.columns) == DISPUTE_FRAME_COLUMNS
+    assert set(debug_df.columns) - {"id"} == LATENT_FRAME_COLUMNS
 
     _validate(features_df, DisputeRecord)
     _validate(debug_df, DebugRecord)

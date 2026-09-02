@@ -303,10 +303,22 @@ estimator:
   At ₹100 and ₹150 the 95% CI includes zero.
 - **At ₹50 the policy is measurably *worse*:** paired mean −131/1,000, CI
   −284 to −6, excluding zero. And yet 12 of 20 seeds are positive. Both facts
-  are real and they are why both are reported: when the policy loses at this
-  cost it loses far more than it wins by — the seven negative seeds run to
-  −1,167 while the twelve positive ones top out at +120. A majority of seeds
-  improving is not the same as the expected value improving.
+  are real, and the shape behind them is measured rather than described
+  (`eval.cost_sensitivity.loss_tail`):
+
+  | Cost (₹) | Mean | Seeds +/− | Worst seed | Best seed | Spread | Mean loss ÷ mean gain |
+  |---:|---:|---:|---:|---:|---:|---:|
+  | 50 | −131 | 12 / 7 | −1,167 | +120 | 1,286 | **7.65×** |
+  | 100 | −257 | 10 / 10 | −1,539 | +817 | 2,355 | 2.52× |
+  | 400 | +11,210 | 19 / 1 | −5,394 | +20,597 | 25,992 | 0.45× |
+
+  **At ₹50 the policy wins slightly more often than it loses, and loses 7.65
+  times harder when it does.** A majority of seeds improving is not the same
+  as the expected value improving, which is why the mean and the sign count
+  are both reported and neither is allowed to stand alone. The asymmetry is a
+  low-cost phenomenon — the ratio falls monotonically as cost rises and is
+  below 1 by the configured ₹400, where the policy wins more often *and*
+  bigger.
 - **The advantage becomes measurable at ₹200** (+1,040, CI +289 to +1,787,
   14/20 seeds positive) and the CI excludes zero at every swept cost above it.
 - **Above ₹200 it grows monotonically.** By ₹2,000 baseline A's own recovered

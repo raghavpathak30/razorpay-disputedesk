@@ -12,7 +12,12 @@ import pandas as pd
 from disputedesk.generator.config import GeneratorConfig
 from disputedesk.model.config import ModelConfig
 from disputedesk.policy.config import REPRESENTMENT_COST_INR
-from eval.cost_sensitivity import fixed_seed_set, summarize_sweep, sweep_representment_cost
+from eval.cost_sensitivity import (
+    fixed_seed_set,
+    loss_tail,
+    summarize_sweep,
+    sweep_representment_cost,
+)
 
 
 def _fmt_median_iqr(summary: pd.DataFrame, prefix: str) -> pd.Series:
@@ -50,6 +55,43 @@ DEFAULT_COSTS = [
     8000,
     10000,
 ]
+
+
+def _print_loss_tails(per_seed: pd.DataFrame, summary: pd.DataFrame) -> None:
+    """The per-seed shape at every cost where the paired mean and the sign
+    count disagree, plus the configured cost for contrast.
+
+    A mean and a majority pointing opposite ways is not a contradiction to be
+    resolved by picking one - it means the distribution is asymmetric, and the
+    asymmetry is the finding. Printed for exactly those costs so it is not
+    noise on the ones where they agree.
+    """
+    disagreeing = [
+        row.representment_cost_inr
+        for row in summary.itertuples()
+        # `advantage_paired_median == 0` filters out cost 0, where the policy
+        # makes identical decisions to baseline A on every seed: no seed moved
+        # either way, so there is no majority to disagree with the mean.
+        if row.advantage_paired_median != 0.0
+        and (row.advantage_paired_mean < 0) != (row.advantage_n_positive * 2 < row.n_seeds)
+    ]
+    interesting = sorted(set(disagreeing) | {REPRESENTMENT_COST_INR})
+    print(
+        "per-seed advantage distribution where the paired mean and the seed "
+        "majority disagree (plus the configured cost for contrast) - a "
+        "loss/gain ratio above 1 means the policy loses harder than it wins:"
+    )
+    for cost in interesting:
+        tail = loss_tail(per_seed, cost)
+        print(
+            f"  cost {tail.representment_cost_inr:>7,.0f}: "
+            f"mean {tail.mean_difference:>10,.1f}  "
+            f"+{tail.n_positive}/-{tail.n_negative} of {tail.n_seeds}  "
+            f"worst {tail.worst_seed_difference:>10,.1f}  "
+            f"best {tail.best_seed_difference:>10,.1f}  "
+            f"spread {tail.spread:>10,.1f}  "
+            f"loss/gain {tail.loss_to_gain_ratio:>5.2f}x"
+        )
 
 
 def _print_advantage_verdict(summary: pd.DataFrame) -> None:
@@ -148,6 +190,8 @@ def main(argv: list[str] | None = None) -> None:
     print()
 
     _print_advantage_verdict(summary)
+    print()
+    _print_loss_tails(per_seed_cost, summary)
 
     print()
     print(f"wrote {args.out_dir / 'cost_sensitivity_per_seed_do_not_report_individually.csv'}")

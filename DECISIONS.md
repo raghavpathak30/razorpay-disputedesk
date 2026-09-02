@@ -2074,3 +2074,278 @@ explicitly-stated character budget may raise the first-draft pass rate, or
 50-character floor.
 
 **Status:** WITHDRAWN.
+
+---
+
+## 2026-09-02 — CORRECTION: the leakage guard could not fire on the worst possible leak
+
+**Old claim:** CLAUDE.md and PHASES.md both list the leakage guard as a
+first-class test asserting no feature column is derivable from the label, with
+"a deliberately leaky control case fails it". `tests/test_generator_leakage_guard.py`
+implemented it as a single Pearson threshold, `|r| > 0.9`, over numeric columns.
+
+**New claim:** that guard passes a frame containing an exact copy of the
+generator's `p` **and** a perfect string leak, simultaneously. Two independent
+reasons:
+
+1. **Correlation against a binary label has a ceiling set by the label's own
+   noise.** `won_if_contested ~ Bernoulli(p)`, so a verbatim copy of `p` — the
+   most total leak there is — correlates only ~0.36 with it. The threshold was
+   0.9. No threshold that also admits legitimate features could have fired.
+   The existing "control" test passed only because it used `p` itself as the
+   *target*, where the correlation is 1.0 by construction — it never exercised
+   the case that mattered.
+2. **Non-numeric columns were skipped entirely**, so a column of literal
+   `"recovered"`/`"written off"` strings was never examined.
+
+**Fix — three independent guards (`eval/leakage.py`), each catching what the
+others miss:**
+
+- **(a) Provenance.** Set equality against `DISPUTE_FRAME_COLUMNS`, a frozen
+  allowlist typed out by hand (deriving it from `DisputeRecord.model_fields`
+  would let adding a latent to the model silently widen the allowlist to admit
+  it — a test asserts the two agree). Plus a value-hash of every feature column
+  against every latent column. No statistics, so it holds however noisy the
+  label is, and it is the only guard that catches a copied latent carrying no
+  label signal at all. Also asserted at the generator boundary itself.
+- **(b) Discrimination ceiling.** Bayes AUC — what ranking on true `p` achieves
+  — against each feature's univariate AUC, flagging at ≥98% of the Bayes lift.
+- **(c) Categorical.** Normalised mutual information plus a per-level purity
+  check (any level with ≥30 rows at a label rate of exactly 0 or 1).
+
+**Measured margins, so the thresholds are checkable rather than asserted**
+(n=5,000, seed 11):
+
+Bayes AUC **0.7397** (lift 0.2397); flag threshold at 98% = lift 0.2349.
+
+| Feature | AUC | Lift | % of ceiling |
+|---|---:|---:|---:|
+| ip_geo_billing_distance_km | 0.3326 | 0.1674 | **69.9%** |
+| prior_order_count | 0.6252 | 0.1252 | 52.2% |
+| avs_match | 0.6186 | 0.1186 | 49.5% |
+| cvv_match | 0.6163 | 0.1163 | 48.5% |
+| device_fingerprint_known | 0.6067 | 0.1067 | 44.5% |
+| days_between_purchase_and_dispute | 0.5691 | 0.0691 | 28.8% |
+| amount | 0.4454 | 0.0546 | 22.8% |
+| checkout_hour_of_day (noise control) | 0.4921 | 0.0079 | 3.3% |
+| purchase_ts | 0.4922 | 0.0078 | 3.3% |
+| delivery_confirmed | 0.5063 | 0.0063 | 2.6% |
+| filed_at / respond_by | 0.4951 | 0.0049 | 2.1% |
+| prior_dispute_count | 0.4973 | 0.0027 | 1.1% |
+
+A copy of `p` sits at 100.0% of the ceiling; so does `-p` and any monotone
+transform (AUC is rank-based).
+
+**The margin is thinner than an earlier draft of this comment claimed.** That
+draft said the strongest legitimate feature reached "roughly a third of the
+ceiling" — written before measuring, and wrong by a factor of two. It is 69.9%.
+So 98% has about 28 points of headroom: real, but not enormous, and the tests
+now assert it directly (`< 0.85`) so a generator change that narrows it fails
+loudly instead of quietly making the constant arbitrary.
+
+**Two design corrections found by the controls themselves, both worth
+recording because both were my errors caught by the fixtures rather than by
+review:**
+
+1. **The shuffled-label control failed the first implementation.** With the
+   label shuffled the Bayes AUC collapses to 0.4972 — a lift of 0.0028 — so
+   every feature's residual sampling noise trivially exceeded 98% of it and
+   seven legitimate features were flagged. A ratio against a denominator
+   indistinguishable from zero is not a measurement. Guard (b) now additionally
+   requires an absolute lift ≥ 0.02, which can only ever *suppress* a flag; a
+   leak under a shuffled label is still caught by guard (a)'s hash check, which
+   needs no signal at all. That division of labour is the argument for having
+   three guards rather than one.
+2. **Timestamps were being checked by the wrong guard.** As object columns
+   `purchase_ts`/`filed_at`/`respond_by` scored NMI 0.1201 — not a leak, an
+   artefact of a near-unique column's own cardinality — which would have eaten
+   most of the NMI threshold's headroom. They are ordered quantities, so they
+   now go through guard (b) instead, where they score 2–3% of the ceiling. The
+   remaining categoricals score ≤ 0.000463 against a 0.30 threshold: three
+   orders of magnitude of headroom.
+
+**Deliberate exclusions, named rather than silent:** `id`/`payment_id` (unique
+per row, assigned from the row index, and excluded from the model's feature set
+anyway) and `customer_communication_log` (not a model input — `features/build.py`
+excludes it explicitly — and *designed* to carry `true_fraud` signal per
+GENERATOR.md §3, so a leak check would flag the generator working as documented;
+that signal is measured openly by `eval/extraction_comparison.py` instead). All
+three are still covered by guards (a) and (b).
+
+**Reproduce:** `pytest tests/test_generator_leakage_guard.py`.
+**Status:** DECIDED.
+
+---
+
+## 2026-09-02 — Hand-rolled batch AUC fuzzed against sklearn; no discrepancy
+
+**Result:** `eval.auc.auc_batch` agrees with `sklearn.metrics.roc_auc_score` to
+**1e-12 absolute** across ~18,000 generated comparisons — 600 parametrised
+cases of 30 rows each, spanning n ∈ {3, 5, 12, 37, 60, 200}, base rates
+0.05–0.95, and 1/2/3/10/1000 distinct score values (1 = every item tied,
+2–3 = the heavy-tie shape a bootstrap resample produces) — plus explicit edge
+cases: all-identical scores, n=1, n=2 both ordered and tied, all-positive,
+all-negative, a reversed perfect ranking, ties straddling the decision
+boundary, and boolean-vs-integer label dtypes.
+
+**No discrepancy was found, so no Phase 1 interval changes.** Every confidence
+interval reported in Phase 1 stands as published.
+
+**Single-class behaviour, defined rather than discovered:** returns NaN, where
+sklearn raises. Deliberate — a bootstrap resample that happens to draw one
+class is an ordinary event, not an error, and `paired_auc_difference` drops
+those draws. A raise would push per-row exception handling into the hot loop
+this function exists to keep fast.
+
+**Also done:** extracted from `eval/extraction_comparison.py` to `eval/auc.py`
+so the rebuilt leakage guard can use the same fuzzed implementation rather than
+a second copy.
+
+**Reproduce:** `pytest tests/test_eval_auc_batch_property.py` (635 tests).
+**Status:** CONFIRMED-RAN (2026-09-02).
+
+---
+
+## 2026-09-02 — CORRECTION: a business-harness assertion computed its expected value from the function under test
+
+**Old claim:** `test_build_business_row_is_internally_consistent_on_a_hand_built_set`
+verified the rupee accounting on a hand-built four-dispute case.
+
+**New claim:** its baseline-A assertion computed the expected value by calling
+`contest_everything_recovered` — the same production function it was checking:
+
+    baseline_a = contest_everything_recovered(won, amount, COST).sum() / 4 * 1000.0
+    assert row["baseline_a_contest_everything_recovered_per_1000_inr"] == baseline_a
+
+That asserts only that `build_business_row` calls that function. **Verified by
+mutation:** making `contest_everything_recovered` ignore the representment cost
+entirely (pass `0.0` instead of the real cost) left the test passing.
+
+**Fix:** every expected value in that test is now a literal worked out on paper
+from SPEC.md §4 and §6, with the four-row derivation written into the docstring
+so a reader can check the arithmetic without running anything. The same
+mutation now fails the test. A second test was split out for the case the
+original could not distinguish — `naive_contest` and `oracle` scoring diverge
+only when an escalated dispute would have *lost*, and the original fixture's
+escalated row happened to be a win.
+
+**One assertion reviewed and *kept*, against first impressions:**
+`test_false_positive_cost_matches_the_fixed_representment_cost_times_count`
+round-trips the per-1,000 figure back to a rupee total, which reads
+tautological. It is not — mutation-tested by doubling the per-FP cost, which
+makes it fail. It is weak (it re-derives from the same relationship), so a
+genuinely independent test was added alongside rather than replacing it:
+`test_false_positive_and_negative_accounting_against_an_independent_derivation`
+recomputes FP and FN in plain numpy from SPEC.md's closed form, never calling
+`decide`, `decide_batch`, `false_positive_cost` or `false_negative_cost`.
+
+**Reproduce:** `pytest tests/test_eval_business_metrics.py tests/test_eval_business_harness_regression.py`.
+**Status:** DECIDED.
+
+---
+
+## 2026-09-02 — CORRECTION: the oracle single-draw test never tested the historical value, which no longer reproduces anyway
+
+**Old claim:** `test_a_single_realized_draw_is_within_a_few_standard_deviations_of_the_mean`
+described itself as confirming that "Phase 1's seed-42
+`average_precision_score(y_true, p_true)` = 0.4335" is ordinary sampling noise
+around the closed-form oracle value.
+
+**New claim, two separate problems:**
+
+1. **The test drew a fresh sample instead.** It called
+   `np.random.default_rng(1)` to generate a *new* Bernoulli draw and checked
+   that. The historical value appeared only in the docstring and was never
+   under test. The test's name and docstring described work it did not do.
+2. **0.4335 no longer reproduces.** Running the current generator at seed 42
+   gives **0.4305**. The generator changed after that measurement
+   (GENERATOR.md revision 2: `amount` became a weakly causal draw on
+   `true_fraud`, and a noise feature was added), so the recorded figure
+   describes a dataset this repository no longer produces.
+
+**Fix:** split into a golden-fixture regression asserting the reproducible
+historical value (0.4304927827841146, at the frozen seed, drawing nothing) and
+a distributional sanity test that draws a fresh sample and says so in its
+docstring. A third test pins the 0.4335-vs-0.4305 gap so it cannot be quietly
+re-asserted, and a fourth checks the claim the old docstring made but never
+tested — that the *historical* value, not a fresh draw, sits within ordinary
+sampling noise of the closed form. It does.
+
+**The gap changes no conclusion.** 0.0030 on a quantity whose replicate
+standard deviation is far larger; the single-draw-vs-closed-form reasoning
+holds at either value. It is recorded rather than silently updated because a
+number quoted in a docstring that cannot be reproduced is the defect class this
+whole remediation exists for.
+
+**Reproduce:** `pytest tests/test_eval_oracle_replicate_check.py`.
+**Status:** DECIDED.
+
+---
+
+## 2026-09-02 — CORRECTION: demo step 6 narrated a timeout it did not induce
+
+**Old claim:** the demo's step 6 printed "Failure path 1: the Razorpay API
+times out, then recovers" and "(exercising the exact
+disputedesk.retry.call_with_backoff both disputedesk/client/razorpay.py and
+disputedesk/evidence/llm.py use)".
+
+**New claim:** the Razorpay API was not involved. The step called
+`call_with_backoff` directly on a local closure that incremented a counter and
+raised `httpx.ConnectTimeout` on its first call. No client, no request, no
+route — the printed narration described a failure of a component the step never
+touched. Step 7 (the 429 path), added later, did it properly at the transport
+layer; step 6 was never brought up to match.
+
+**Fix:** step 6 now injects a real `httpx.ReadTimeout` from an
+`httpx.MockTransport` underneath the real `RazorpayHttpClient`, reached over
+the real webhook route — the same shape as step 7. The client builds a real
+request, hands it to `httpx`, and gets a real timeout back. It files its own
+dispute (`disp_demo_timeout_recover`) and prints its own audit row, so
+"filed exactly once after a retry" is now visible in the log rather than
+asserted.
+
+**A second piece of false narration found while fixing it:** the shared
+`_compressed_sleep_fn` printed "the honoured Retry-After value - matches the
+header above" on *every* backoff. A timeout carries no `Retry-After` header;
+step 6's 0.5s comes from exponential backoff. It is now a factory taking the
+reason as a parameter, and each step states its own truthfully.
+
+**Reproduce:** `python -m disputedesk.cli.demo --deterministic-only`.
+**Status:** DECIDED.
+
+---
+
+## 2026-09-02 — The ₹50 loss tail, measured
+
+**Result:** at `representment_cost_inr = 50` the paired mean advantage is
+negative while a majority of seeds are positive. The per-seed distribution
+(20 seeds × 15,000 rows, seeds 0–19):
+
+| Cost (₹) | Mean | Seeds +/− | Worst seed | Best seed | Spread | Mean loss ÷ mean gain |
+|---:|---:|---:|---:|---:|---:|---:|
+| 50 | −130.6 | 12 / 7 | −1,166.6 | +119.7 | 1,286.3 | **7.65×** |
+| 100 | −257.2 | 10 / 10 | −1,538.5 | +816.5 | 2,355.1 | 2.52× |
+| 400 (configured) | +11,210.3 | 19 / 1 | −5,394.4 | +20,597.2 | 25,992 | 0.45× |
+
+(Counts do not sum to 20 at ₹50: one seed's difference is exactly zero — the
+policy made identical decisions to baseline A on it.)
+
+**In its own voice:** at ₹50 the policy wins slightly more often than it loses
+and loses **7.65 times harder** when it does. That is why the mean and the sign
+count disagree, and why reporting either alone would mislead — in opposite
+directions depending on which. The asymmetry is a low-cost phenomenon: the
+ratio falls monotonically with cost and is below 1 by the configured ₹400,
+where the policy wins both more often and bigger.
+
+**Mechanism, offered as an explanation and not a measurement:** at a near-zero
+cost almost every dispute clears the `p_win * amount > cost` bar, so the policy
+and baseline A agree on nearly every row. The few rows they disagree on are
+ones the policy declined to contest — and on a seed where several of those
+turn out to have been winnable, the policy forgoes the full `amount` while its
+wins are worth only the ₹50 fee it avoided. Small upside, large downside, by
+construction of the cost model at that cost.
+
+**Reproduce:** `python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000`
+(the "per-seed advantage distribution" block). Pinned at CI scale by
+`tests/test_eval_loss_tail.py`.
+**Status:** CONFIRMED-RAN (2026-09-02).
