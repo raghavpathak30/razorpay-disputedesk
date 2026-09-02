@@ -1802,3 +1802,232 @@ ordinary-session UPDATE and DELETE on both tables all raise, a raw-SQL UPDATE
 raises, and four chain-tamper tests that drop the triggers through a privileged
 connection and assert `verify_chain()` fails — including the hard case where the
 attacker recomputes the edited row's own `row_hash` to be self-consistent.
+
+---
+
+## 2026-09-02 — Cost sweep assumptions made explicit: human review excluded, submission success assumed
+
+**Decision:** the cost sweep continues to score **auto-filed disputes only**.
+The `withheld_for_review` path Phase 0 added is excluded rather than modelled,
+and both of the sweep's load-bearing assumptions are now named constants and
+prose in `eval/cost_sensitivity.py` instead of being implicit.
+
+**Why exclude rather than model:** modelling it needs two inputs and only one
+is measurable.
+
+- The **reason-code** component of the withheld rate is exactly **0%** on
+  every dataset the sweep scores: the generator emits only the four codes with
+  an evidence strategy. Asserted, not assumed, by
+  `tests/test_eval_sweep_assumptions.py::test_the_generator_never_produces_a_reason_code_that_would_be_withheld`.
+- The **letter-drafting** component is **currently unmeasured**. Its only
+  empirical input was the 2026-09-01 letter-drafting reliability run, which
+  the Phase 0 remediation invalidated by replacing both the output schema
+  (4,000 → 1,000 characters) and the prompt (v1 → v2), and which cannot be
+  re-measured here (no `LLM_API_KEY` configured).
+
+Choosing a withheld rate with no measurement behind it would put an invented
+number into a headline, which is worse than an explicit exclusion. The
+rejected alternative was to pick a plausible-looking rate and a human-review
+cost and present the result as modelled.
+
+**The exclusion is not neutral, and the direction is stated:** it can only
+*overstate* the policy's advantage, never understate it. A withheld dispute is
+credited a filing that did not happen and charged nothing for the review that
+did. `break_even_human_review_cost_inr` turns that into a checkable number:
+at the configured ₹400, the paired advantage of +11,210/1,000 is cancelled if
+each human-touched dispute costs about **₹200** to review. That is computed at
+the measured ESCALATE rate (5.62%) alone, so it is an upper bound — any
+non-zero withheld rate lowers it. For scale, `representment_cost_inr` already
+budgets ₹150 of analyst time per *contested* dispute.
+
+**Second assumption, and it is currently false:** the sweep credits recovered
+value to every filed contest, i.e. assumes each is accepted for review.
+Razorpay's contest endpoint documents that `action="submit"` requires at least
+one document id (verified 2026-09-02), and this project sends none because it
+has no document-upload pipeline. **A contest filed by this system today would
+very likely be rejected by the live API.** Recorded as
+`SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED = False` with a test that keeps it
+false until the upload path exists. The *comparison* against baseline A is
+unaffected (baseline A files through the same client and inherits the same
+gap); the absolute rupee totals are contingent on a component that does not
+exist, and the README now says so.
+
+**Reproduce:** `python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000`
+(the `break_even_review_cost_inr` column); `pytest tests/test_eval_sweep_assumptions.py`.
+**Status:** DECIDED.
+
+---
+
+## 2026-09-02 — CORRECTION: the cost sweep used an unpaired estimator on a paired design
+
+**Old claim:** the sweep's headline was `policy_advantage_median =
+median(policy) − median(baseline_a)`, per cost. From it the README concluded:
+"**Below ≈290**, the policy is **statistically indistinguishable from baseline
+A** — the median advantage is under 0.1% of the ~2,000,000 base and its sign
+flips between adjacent swept values (noise from individual near-threshold
+disputes crossing `decide()`'s cutoff, not a real effect)." The configured-cost
+advantage was reported as **+12,923 INR/1,000, ≈0.75% over baseline A**.
+
+**New claim:** every seed scores both arms on the identical generated dataset,
+the identical temporal split, and the identical trained model. That is a paired
+design. The estimator is now the mean of per-seed differences, with a 95%
+percentile bootstrap over seeds and a sign-test count reported alongside.
+Under it:
+
+| Cost (₹) | Old (diff of medians) | New (paired mean) | 95% CI | Seeds + |
+|---:|---:|---:|---|---:|
+| 0 | 0 | 0 | 0 to 0 | 0/20 |
+| 50 | −219 | **−131** | −284 to −6 | 12/20 |
+| 100 | −163 | **−257** | −563 to +53 | 10/20 |
+| 200 | +1,772 | **+1,040** | +289 to +1,787 | 14/20 |
+| 300 | +4,209 | **+4,184** | +2,673 to +5,717 | 18/20 |
+| **400** | **+12,923** | **+11,210** | **+8,508 to +13,633** | **19/20** |
+| 600 | +44,403 | +42,923 | +38,006 to +47,564 | 20/20 |
+| 800 | +86,000 | **+95,731** | +88,717 to +102,444 | 20/20 |
+| 1,000 | +152,071 | +162,600 | +154,130 to +170,686 | 20/20 |
+| 2,000 | +669,547 | +685,586 | +671,494 to +700,821 | 20/20 |
+| 4,000 | +2,168,360 | +2,180,044 | +2,151,701 to +2,210,984 | 20/20 |
+| 10,000 | +7,573,243 | +7,555,900 | +7,501,981 to +7,607,412 | 20/20 |
+
+**The headline got worse: +12,923 → +11,210, and ≈0.75% → ≈0.66% over
+baseline A.** That is the new number.
+
+**Why the old one was wrong:** a difference of medians answers a question
+nobody asked — the two medians can come from different seeds, so the statistic
+is not an estimate of the paired difference at all. It also carried no
+interval, which is what let a per-point sign change be *asserted* to be noise
+rather than tested. Seed-to-seed variation here is large and shared (it moves
+both arms together), which is exactly the variance pairing removes.
+
+**Conclusions that did not survive, and the sentence that was deleted:** the
+"below ≈290 … sign flips … not a real effect" sentence is deleted from the
+README rather than softened. The paired data contradicts it in both
+directions:
+
+- **₹200 and ₹250 are measurable positives**, not noise (+1,040, CI +289 to
+  +1,787, 14/20; and +1,690, CI +291 to +3,018, 14/20). The 14/20 count at the
+  low end matches what the verification pass reported.
+- **₹50 is a measurable *negative*** (−131, CI −284 to −6, excludes zero) —
+  while 12 of 20 seeds are positive. Both are true and both are now reported:
+  when the policy loses at this cost it loses far harder than it wins, the
+  seven negative seeds running to −1,167 against a best positive seed of +120.
+  A majority of seeds improving is not the same as expected value improving,
+  and reporting only one of the two statistics would hide that.
+- Only **₹0, ₹100 and ₹150** are genuinely indistinguishable from baseline A.
+
+**The finding, in the form the brief asked for:** *no measurable advantage
+over "contest everything" at or below ₹150 per representment; the advantage
+becomes measurable at **₹200** and grows monotonically above it.* The
+configured ₹400 sits above that threshold, but not far above it.
+
+**Grid refined to locate the threshold:** ₹150, ₹250 and ₹350 were added to
+the swept costs. The old grid jumped 100 → 200 → 300 and could not resolve
+where the transition actually is; asserting "≈290" from it was not supported
+by the points measured.
+
+**Reproduce:** `python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000`.
+Regression-pinned at CI scale (8 seeds × 5,000 rows, exact values to 4dp) by
+`tests/test_eval_cost_sweep_regression.py` — whose own numbers are explicitly
+**not results**: at that scale the ₹200 advantage is negative, the opposite of
+the headline, which is why that file says so in its first paragraph.
+**Status:** CONFIRMED-RAN (20 seeds × 15,000 rows, seeds 0–19, 2026-09-02).
+
+---
+
+## 2026-09-02 — CORRECTION: the TF-IDF baseline had no code, and was measured at a different n than the arm it was compared against
+
+**Old claim:** README — "**We measured whether the LLM actually adds predictive
+value here, and it does not.**" TF-IDF + logistic regression: **AUC 0.6371**.
+LLM normalisation: **mean AUC 0.4211** (n=60, seed 0). "The gap is wide enough,
+and structurally explained enough, to be a real result." Elsewhere the gap was
+characterised as a wide margin rather than a close call decided by noise.
+
+**New claim:** on the identical 60 items, with identical cross-validation
+folds, paired:
+
+| Arm | AUC (pooled out-of-fold) | Per-fold mean | vs. chance, 95% CI |
+|---|---:|---:|---|
+| TF-IDF + logistic regression | 0.5392 | 0.5104 | +0.0392 (−0.1349 to +0.2081) — not distinguishable |
+| LLM typed fields | 0.3768 | 0.4211 | −0.1232 (−0.2735 to +0.0304) — not distinguishable |
+
+**Paired difference +0.1624, 95% paired bootstrap CI −0.0648 to +0.3858 —
+includes zero.** The direction survives; the claim that it is beyond noise
+does not.
+
+**Why the old claim was wrong — three separate failures, worst first:**
+
+1. **The baseline had no implementation anywhere in the repository.** 0.6371
+   appeared exactly once, as a bare `**Result:**` line appended to the
+   2026-08-31 "Generator calibration" *decision* entry — not in the measurement
+   format this file mandates, with no n, no seed, no command, and no
+   CONFIRMED-RAN status. This file's own header says: "Never let a number
+   appear in the README or the pitch video unless it has an entry here marked
+   CONFIRMED-RAN." That rule was written in this repository and then broken by
+   the single most rhetorically load-bearing number in the README.
+2. **The two arms were measured at different sample sizes, and the difference
+   was attributed to method.** Re-implementing the baseline shows what 0.6371
+   almost certainly was: a large-sample measurement. The same implementation
+   scores **0.6479 at n=3,000** — near-reproducing the recorded figure — and
+   **0.5104 at n=60**. So roughly half of the apparent 0.216 gap was sample
+   size, not extraction method. This is the substantive error; the missing code
+   is what allowed it to go unnoticed.
+3. **Nothing was paired and nothing had an interval**, so "not a close call
+   decided by noise" asserted a statistical property that no computed quantity
+   in the comparison could support.
+
+**What is now committed:** `eval/tfidf_baseline.py` (the baseline as a
+first-class module, with the vectorizer fit **inside each training fold** —
+fitting it on the full corpus would leak test-fold vocabulary and idf weights
+and inflate precisely the number the LLM is judged against; a shuffled-label
+control guards this), `eval/extraction_comparison.py` (paired out-of-fold
+scoring and a paired bootstrap over items), and
+`data/reference/llm_normalization_arm_n60_seed0.csv` — the recorded LLM run
+itself, which previously lived only in gitignored `data/eval/` and so was
+reproducible by nobody. The runner refuses to report anything if the
+regenerated items no longer match the recorded arm row for row.
+
+**The LLM arm reproduces exactly** (0.4210648… per-fold mean), which places the
+error entirely on the baseline side of the comparison, not the LLM side.
+
+**Not raised, and why:** the brief said to raise n if cheap. It is not — the
+LLM arm needs a live API key and ~1,000 Groq calls, and no key is configured
+in this environment. The TF-IDF arm's own n=60-vs-n=3,000 spread suggests
+n ≈ 1,000 is roughly where this comparison becomes readable. Command:
+`python -m eval.run_llm_normalization_quality --n-rows 1000 --seed 0`, then
+commit the recording alongside the n=60 one.
+
+**What this does not change:** the LLM's narrow role in this system was never
+justified by this measurement, and is not weakened by its correction. The
+policy engine is a pure function of `P(win)` and `amount`, the reason-code
+mapping is a published lookup table, and no LLM output does arithmetic on
+money (SPEC.md §2). That argument is architectural and stands without any AUC
+number at all. The README now says so explicitly, so a reader is not left
+thinking the boundary rested on this table.
+
+**Reproduce:** `python -m eval.run_extraction_comparison` (no API key, no
+network). Exact values pinned by
+`tests/test_eval_extraction_comparison_regression.py`.
+**Status:** CONFIRMED-RAN (2026-09-02).
+
+---
+
+## 2026-09-02 — Mutation spot-check on the Phase 0 guards
+
+**Result:** three of the Phase 0 tests were checked by breaking the code they
+cover and confirming the test fails, then restoring. One per defect.
+
+| Defect | Mutation | Result |
+|---|---|---|
+| 0.1 letter provenance | `require_submittable`'s check made unreachable (`if False`) | 5 of 11 tests in `test_evidence_letter_provenance.py` fail, including the "no network call was made" test and the fake-client parity test |
+| 0.3 reason codes | pipeline's `is_supported_reason_code` gate made unreachable | 69 of 82 tests in `test_evidence_published_reason_codes.py` fail (unsupported codes reach `required_evidence_types` and 500) |
+| 0.4 append-only | `DELETE` dropped from the installed trigger verbs | both delete tests fail; the four update tests correctly still pass |
+
+**Why this was worth five minutes:** every defect in this remediation is a
+test that passed for the wrong reason or an assertion that pinned the defect
+in place. A guard that cannot fail is the exact failure mode being corrected,
+so the guards themselves needed the same treatment.
+
+**Caveat:** three mutations is a spot-check, not a mutation-testing run. It
+establishes that these three guards are load-bearing; it says nothing about
+coverage of the rest of the suite.
+**Status:** CONFIRMED-RAN (2026-09-02).

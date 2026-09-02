@@ -1,0 +1,82 @@
+# The LLM arm of the normalisation-quality comparison, recorded output.
+#
+# Provenance: produced by
+#   python -m eval.run_llm_normalization_quality --n-rows 60 --seed 0
+# against the real Groq API (`openai/gpt-oss-20b`) on 2026-09-01 - the single
+# run DECISIONS.md's 2026-09-01 "LLM normalisation quality vs. TF-IDF
+# baseline" entry reports. It originally landed in `data/eval/`, which is
+# gitignored, so the measurement was not reproducible by anyone else.
+#
+# Committed here on 2026-09-02 (remediation defect 1.2) so the paired
+# comparison against the TF-IDF baseline reproduces with no API key and no
+# live call. These are the LLM's own extracted fields, unmodified.
+#
+# Row order is `generate_dataset(60, seed=0, GeneratorConfig())`'s index
+# order, which is what makes row i of this file and row i of a regenerated
+# dataset the same dispute. `eval/run_extraction_comparison.py` re-derives
+# `true_fraud` from the generator and refuses to run if it disagrees with the
+# column below, so a generator change can never silently mis-pair the arms.
+#
+# `true_fraud` is a debug-only generator latent (eval use only, never a model
+# or policy input).
+true_fraud,human_review_required,claims_unauthorized_transaction,mentions_prior_bank_contact,mentions_shared_card_access,mentions_travel,is_substantive,tone_polite,tone_terse
+True,False,1,0,0,0,1,1,0
+True,False,1,0,0,0,1,1,0
+True,False,1,0,0,1,1,1,0
+False,False,1,0,0,0,1,0,1
+True,False,1,0,0,0,1,1,0
+False,False,1,1,0,0,1,1,0
+True,False,1,1,0,0,1,1,0
+False,False,1,0,1,0,1,1,0
+True,False,1,1,0,0,1,0,1
+True,False,1,0,0,1,1,0,0
+False,False,1,0,0,1,1,1,0
+False,False,1,1,0,0,1,1,0
+True,False,1,1,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,1,1,1,0
+False,False,1,1,0,0,1,1,0
+False,False,1,1,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,1,0,0,1,1,0
+False,False,1,0,0,0,1,0,1
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,1,1,1,0
+True,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+True,False,1,0,0,0,1,1,0
+False,False,1,0,1,0,1,1,0
+False,False,1,1,0,0,1,0,0
+False,False,1,0,1,0,1,0,0
+True,False,1,1,0,0,1,1,0
+False,False,1,0,1,0,1,1,0
+False,False,1,0,1,0,1,1,0
+False,False,1,0,1,0,1,1,0
+True,False,1,0,0,0,1,1,0
+False,False,1,0,0,1,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,0,0
+False,False,1,0,0,0,1,1,0
+True,False,0,0,0,0,0,0,1
+False,False,1,0,0,1,1,1,0
+False,False,1,0,0,0,1,0,0
+True,False,1,0,0,0,1,1,0
+False,False,0,0,0,0,0,0,1
+False,False,1,0,0,1,1,1,0
+False,False,1,0,0,0,1,1,0
+True,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+True,False,1,0,0,0,1,0,0
+False,False,1,1,0,0,1,1,0
+True,False,1,0,0,0,1,0,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+False,False,1,0,0,0,1,1,0
+True,False,1,0,1,0,1,0,0
+False,False,1,1,0,0,1,0,1
+True,False,1,0,0,0,1,1,0

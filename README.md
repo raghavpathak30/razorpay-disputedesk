@@ -86,31 +86,63 @@ sets a `human_review_required` flag — it never crashes and never lets
 unvalidated text reach the Razorpay client (`SPEC.md` §7 failure path 2,
 demoed live — see "Running the demo" below).
 
-**We measured whether the LLM actually adds predictive value here, and it
-does not.** `disputedesk/evidence/normalize_comms.py`'s typed extraction
-was benchmarked against a TF-IDF + logistic-regression baseline on the same
-`customer_communication_log` → `true_fraud` prediction task, 5-fold
-stratified CV both times:
+**We measured whether the LLM's typed extraction adds predictive value
+here. At the sample size available, it cannot be shown either way — and the
+comparison the earlier version of this README reported was not sound.**
+Corrected 2026-09-02; the superseded claim and what was wrong with it are in
+`DECISIONS.md`'s entry of that date. Reproduce everything below with
+`python -m eval.run_extraction_comparison` (no API key needed — the LLM arm
+is a committed recording).
 
-- TF-IDF + logistic regression: **AUC 0.6371**
-- LLM normalisation (`openai/gpt-oss-20b` via Groq, real API, n=60,
-  seed=0): **mean AUC 0.4211** (std 0.1378 across folds) — below a coin
-  flip on 3 of 5 folds.
+`disputedesk/evidence/normalize_comms.py`'s typed extraction and a TF-IDF +
+logistic-regression baseline (`eval/tfidf_baseline.py`) were scored on the
+**same 60 disputes**, with the **same cross-validation folds**, on the same
+`customer_communication_log` → `true_fraud` task:
 
-The LLM extraction is *reliable* (all 60 completions validated against
-schema on the first call, no repair or fallback needed) but not
-*predictive*: the two fields that would carry the most signal
-(`claims_unauthorized_transaction`, `is_substantive`) sit near 1.0 for
-both classes, because the generator's comms-log design (`GENERATOR.md` §3)
-deliberately makes the differentiating signal a subtle frequency tilt
-across near-synonymous phrasings — exactly what a bag-of-words vectorizer
-preserves as continuous per-token weight and a coarse yes/no LLM extraction
-collapses away. This is a single n=60 diagnostic run, not a multi-seed
-headline (see `DECISIONS.md`'s 2026-09-01 entry for the full breakdown and
-caveats on sample size) — but the gap is wide enough, and structurally
-explained enough, to be a real result: it is the reason this project's LLM
-role stayed narrow (draft text, don't extract structured signal from it)
-rather than being tuned away.
+| Arm | AUC (n=60, paired) | vs. chance (95% CI) |
+|---|---|---|
+| TF-IDF + logistic regression | 0.5392 | +0.0392 (−0.1349 to +0.2081) — **not distinguishable** |
+| LLM typed fields | 0.3768 | −0.1232 (−0.2735 to +0.0304) — **not distinguishable** |
+
+**Paired difference: +0.1624 in TF-IDF's favour, 95% paired bootstrap CI
+−0.0648 to +0.3858 — the interval includes zero.** The direction survives.
+The previous claim that this was "wide enough … to be a real result" does
+not: at n=60 neither arm can be shown to carry any signal at all, so neither
+can be shown to beat the other.
+
+What was wrong before: the LLM arm (0.4211, n=60) was compared against a
+TF-IDF figure of **0.6371 that had no code, no recorded n, no seed and no
+command anywhere in this repository**. Re-implementing the baseline shows
+what that number almost certainly was — a *large-sample* measurement. The
+same implementation scores **0.6479 at n=3,000** and **0.5104 at n=60**
+(per-fold means). So the original comparison put a large-sample baseline
+against a 60-item LLM run and attributed the gap to the extraction method.
+Roughly half of the apparent 0.216 gap was sample size, not method.
+
+The LLM extraction is still *reliable* on this sample (all 60 completions
+validated against schema on the first call, no repair or fallback), and the
+structural argument for why its typed fields would struggle is unchanged and
+worth keeping: the generator's comms-log design (`GENERATOR.md` §3) makes the
+differentiating signal a subtle frequency tilt across near-synonymous
+phrasings, which a bag-of-words vectorizer preserves as continuous per-token
+weight and a coarse yes/no extraction collapses. But that is now an
+explanation offered for a difference **this evidence cannot establish**, not a
+finding.
+
+**What would settle it:** re-running the LLM arm at n ≈ 1,000, which the
+TF-IDF arm's own n=60-vs-n=3,000 spread suggests is roughly where this
+comparison becomes readable. That needs a live API key and roughly 1,000
+Groq calls; it was not run here (no `LLM_API_KEY` is configured in this
+environment). The command is
+`python -m eval.run_llm_normalization_quality --n-rows 1000 --seed 0`, and
+`eval/run_extraction_comparison.py` will pair against it once the recording
+is committed.
+
+This measurement is *not* what justifies the LLM's narrow role in this
+system. That justification is architectural and stands on its own: the policy
+engine is a pure function of `P(win)` and `amount`, the reason-code mapping is
+a published lookup table, and no LLM output does arithmetic on money
+(`SPEC.md` §2). Nothing in the table above is load-bearing for that.
 
 ## Headline numbers
 
@@ -142,24 +174,37 @@ rupee numbers describe the same set of "effectively contested" rows). ₹400
 is `PolicyConfig`'s **configured default**, not "the" operating point — the
 row it lands on is bolded below for reference, not singled out as special:
 
-| Cost (₹) | Precision | Recall | Policy advantage vs. baseline A (INR/1,000, median) |
-|---:|---|---|---:|
-| 0 | 0.2377 (0.2331–0.2422) | 1.0000 (1.0000–1.0000) | 0 |
-| 50 | 0.2378 (0.2333–0.2423) | 1.0000 (0.9985–1.0000) | −219 |
-| 100 | 0.2387 (0.2340–0.2429) | 0.9965 (0.9917–0.9977) | −163 |
-| 200 | 0.2432 (0.2378–0.2467) | 0.9768 (0.9753–0.9812) | +1,772 |
-| 300 | 0.2479 (0.2422–0.2524) | 0.9506 (0.9459–0.9578) | +4,209 |
-| **400 (configured default)** | **0.2543 (0.2476–0.2569)** | **0.9155 (0.9111–0.9232)** | **+12,923** |
-| 600 | 0.2641 (0.2571–0.2675) | 0.8446 (0.8301–0.8513) | +44,403 |
-| 800 | 0.2724 (0.2672–0.2775) | 0.7726 (0.7655–0.7812) | +86,000 |
-| 1,000 | 0.2791 (0.2700–0.2849) | 0.7036 (0.6957–0.7126) | +152,071 |
-| 1,500 | 0.2915 (0.2848–0.2979) | 0.5613 (0.5513–0.5715) | +390,402 |
-| 2,000 | 0.2991 (0.2949–0.3080) | 0.4521 (0.4380–0.4744) | +669,547 |
-| 3,000 | 0.3142 (0.3074–0.3278) | 0.3123 (0.2999–0.3443) | +1,384,613 |
-| 4,000 | 0.3233 (0.3137–0.3375) | 0.2339 (0.2207–0.2558) | +2,168,360 |
-| 6,000 | 0.3369 (0.3264–0.3644) | 0.1540 (0.1408–0.1759) | +3,893,929 |
-| 8,000 | 0.3467 (0.3346–0.3780) | 0.1252 (0.1100–0.1369) | +5,722,304 |
-| 10,000 | 0.3599 (0.3435–0.3868) | 0.1069 (0.0981–0.1192) | +7,573,243 |
+| Cost (₹) | Precision | Recall | Paired advantage vs. baseline A (INR/1,000) | 95% CI | Seeds + | CI excludes 0 |
+|---:|---|---|---:|---|---:|---|
+| 0 | 0.2377 (0.2331–0.2422) | 1.0000 (1.0000–1.0000) | +0 | +0 to +0 | 0/20 | **no** |
+| 50 | 0.2378 (0.2333–0.2423) | 1.0000 (0.9985–1.0000) | -131 | -284 to -6 | 12/20 | yes |
+| 100 | 0.2387 (0.2340–0.2429) | 0.9965 (0.9917–0.9977) | -257 | -563 to +53 | 10/20 | **no** |
+| 150 | 0.2406 (0.2353–0.2444) | 0.9873 (0.9841–0.9931) | +141 | -416 to +675 | 11/20 | **no** |
+| 200 | 0.2432 (0.2378–0.2467) | 0.9768 (0.9753–0.9812) | +1,040 | +289 to +1,787 | 14/20 | yes |
+| 250 | 0.2456 (0.2400–0.2495) | 0.9657 (0.9605–0.9698) | +1,690 | +291 to +3,018 | 14/20 | yes |
+| 300 | 0.2479 (0.2422–0.2524) | 0.9506 (0.9459–0.9578) | +4,184 | +2,673 to +5,717 | 18/20 | yes |
+| 350 | 0.2503 (0.2441–0.2542) | 0.9324 (0.9270–0.9388) | +5,970 | +3,501 to +8,077 | 18/20 | yes |
+| **400 (configured default)** | **0.2543 (0.2476–0.2569)** | **0.9155 (0.9111–0.9232)** | **+11,210** | **+8,508 to +13,633** | **19/20** | **yes** |
+| 600 | 0.2641 (0.2571–0.2675) | 0.8446 (0.8301–0.8513) | +42,923 | +38,006 to +47,564 | 20/20 | yes |
+| 800 | 0.2724 (0.2672–0.2775) | 0.7726 (0.7655–0.7812) | +95,731 | +88,717 to +102,444 | 20/20 | yes |
+| 1,000 | 0.2791 (0.2700–0.2849) | 0.7036 (0.6957–0.7126) | +162,600 | +154,130 to +170,686 | 20/20 | yes |
+| 1,500 | 0.2915 (0.2848–0.2979) | 0.5613 (0.5513–0.5715) | +396,168 | +384,822 to +407,618 | 20/20 | yes |
+| 2,000 | 0.2991 (0.2949–0.3080) | 0.4521 (0.4380–0.4744) | +685,586 | +671,494 to +700,821 | 20/20 | yes |
+| 3,000 | 0.3142 (0.3074–0.3278) | 0.3123 (0.2999–0.3443) | +1,390,451 | +1,369,312 to +1,413,406 | 20/20 | yes |
+| 4,000 | 0.3233 (0.3137–0.3375) | 0.2339 (0.2207–0.2558) | +2,180,044 | +2,151,701 to +2,210,984 | 20/20 | yes |
+| 6,000 | 0.3369 (0.3264–0.3644) | 0.1540 (0.1408–0.1759) | +3,904,450 | +3,869,015 to +3,941,954 | 20/20 | yes |
+| 8,000 | 0.3467 (0.3346–0.3780) | 0.1252 (0.1100–0.1369) | +5,712,932 | +5,665,269 to +5,759,948 | 20/20 | yes |
+| 10,000 | 0.3599 (0.3435–0.3868) | 0.1069 (0.0981–0.1192) | +7,555,900 | +7,501,981 to +7,607,412 | 20/20 | yes |
+
+**The advantage column is the mean of per-seed differences**, not a
+difference of medians. Every seed scores both arms on the identical
+holdout, so the comparison is paired and must be estimated as one; the CI
+is a 95% percentile bootstrap over the 20 seeds and "Seeds +" is the
+sign-test count. Both are reported because they answer different questions
+and here they sometimes disagree — see ₹50 below. The previous version of
+this table reported `median(policy) − median(baseline A)`; that estimator,
+and the conclusion drawn from it, are corrected in `DECISIONS.md`
+2026-09-02.
 
 Precision rises and recall falls monotonically as cost rises — a higher
 cost raises the per-row breakeven `p_win` required to contest
@@ -207,9 +252,13 @@ median test-split size n=3,609.5:
 way baseline A already scores every dispute — contested — which is the
 fair apples-to-apples comparison, since baseline A doesn't have an
 abstention path to be penalised for using. Under this scoring **the policy
-beats both baselines**, though narrowly at this cost (+12,923 INR/1,000,
-≈0.75% over baseline A) — see "Cost sensitivity" below for why that margin
-is cost-dependent, not fixed. Two other ways of scoring an escalated
+beats both baselines**, though narrowly at this cost: **paired mean
++11,210 INR/1,000, 95% CI +8,508 to +13,633, 19 of 20 seeds positive —
+≈0.66% over baseline A**. (Corrected 2026-09-02: previously reported as
++12,923 / ≈0.75%, which was a difference of medians on a paired design. The
+corrected figure is smaller — see `DECISIONS.md`.) See "Cost sensitivity"
+below for why that margin is cost-dependent, not fixed, and for two costs the
+sweep does not charge for. Two other ways of scoring an escalated
 dispute are reported for context, not as headlines: crediting it 0 (the
 most conservative reading — the policy then trails baseline A, 1,559,504
 vs. 1,701,092, because that scoring structurally penalises having an
@@ -240,41 +289,81 @@ lost dispute `amount`.
 
 ## Cost sensitivity — a curve, not a point estimate
 
-The +12,923/1,000 advantage above is one point on a swept curve, not the
-whole story (`python -m eval.run_cost_sensitivity`, same 20 seeds,
-`representment_cost_inr` swept 0 → 10,000, `low_confidence_band` held
-fixed):
+The +11,210/1,000 paired advantage at the configured cost is one point on a
+swept curve, not the whole story (`python -m eval.run_cost_sensitivity
+--n-seeds 20 --n-rows 15000`, same 20 seeds, `representment_cost_inr` swept
+0 → 10,000, `low_confidence_band` held fixed).
 
-- **Below ≈290**, the policy is **statistically indistinguishable from
-  baseline A** — the median advantage is under 0.1% of the ~2,000,000
-  base and its sign flips between adjacent swept values (noise from
-  individual near-threshold disputes crossing `decide()`'s cutoff, not a
-  real effect). Near cost=0 this is expected by construction:
-  `expected_value ≈ p_win * amount`, positive for nearly every dispute, so
-  the policy contests almost everything baseline A already contests
-  everything.
-- **The configured value, 400,** sits just above that noisy band — a real
-  but modest edge (+0.75%).
-- **Above ≈300 the advantage grows monotonically and robustly**, crossing
-  10% of baseline A's own total between cost=800 (6.6%) and cost=900
-  (10.4%) — roughly 2.25× the configured cost. By cost≈2,000, baseline A's
-  recovered total has fallen to near zero while the policy still recovers
-  770,639/1,000; by cost≈2,500 and above, baseline A goes net *negative*
-  (contesting everything actively destroys value) while the policy stays
-  solidly positive — the clearest divergence in the sweep, driven by the
-  policy declining to contest disputes whose `p_win * amount` no longer
-  clears the larger cost, versus baseline A paying the fee regardless of
-  merit.
+**Where the advantage is measurable, and where it is not.** Under the paired
+estimator:
 
-Reading a single number off this curve (the configured-cost row) without
-the shape around it understates what the policy is worth in a
-higher-cost regime and overstates how confidently it beats baseline A in a
-near-zero-cost one. The exact crossover points are themselves noisy and
-shouldn't be over-read; the qualitative shape — near-parity low, growing
-and monotonic high — is the robust finding. Full table:
-`DECISIONS.md`'s 2026-08-31 "representment_cost_inr sensitivity sweep"
-entry; raw data in `data/eval/cost_sensitivity_median_iqr.csv` after
-running the command above.
+- **No measurable advantage at or below ₹150.** At ₹0 the two arms are
+  identical by construction (`expected_value = p_win × amount ≥ 0` for
+  essentially every dispute, so the policy contests what baseline A contests).
+  At ₹100 and ₹150 the 95% CI includes zero.
+- **At ₹50 the policy is measurably *worse*:** paired mean −131/1,000, CI
+  −284 to −6, excluding zero. And yet 12 of 20 seeds are positive. Both facts
+  are real and they are why both are reported: when the policy loses at this
+  cost it loses far more than it wins by — the seven negative seeds run to
+  −1,167 while the twelve positive ones top out at +120. A majority of seeds
+  improving is not the same as the expected value improving.
+- **The advantage becomes measurable at ₹200** (+1,040, CI +289 to +1,787,
+  14/20 seeds positive) and the CI excludes zero at every swept cost above it.
+- **Above ₹200 it grows monotonically.** By ₹2,000 baseline A's own recovered
+  total has fallen to near zero while the policy still recovers 770,639/1,000;
+  by ₹3,000 baseline A is net *negative* — contesting everything actively
+  destroys value — while the policy is still positive. That divergence is the
+  robust part of this curve.
+
+So: **no measurable advantage over "contest everything" below ₹200 per
+representment; the advantage appears at ₹200 and grows above it.** The
+configured ₹400 sits above that threshold but not far above it.
+
+The sentence this section previously carried — that below ≈290 the sign flips
+were "noise from individual near-threshold disputes … not a real effect" — was
+an assertion the unpaired estimator had no standing to make, and the paired
+data contradicts it in both directions: ₹200–₹250 *are* measurable positives,
+and ₹50 is a measurable negative. It is deleted rather than softened.
+
+### Two things this sweep does not charge for
+
+Both were implicit until 2026-09-02. Both make the numbers above **more**
+favourable to the policy than a full accounting would, never less.
+
+**1. Human review time.** Every CONTEST and ESCALATE decision above is
+credited as a filed representment. In the running system a dispute whose
+evidence packet is not fit to file is withheld and queued for a person
+(Phase 0 remediation), and escalated disputes were always a person's problem.
+The sweep charges nothing for that time. Turning that into a number: the
+₹400 advantage of +11,210/1,000 is cancelled if each human-touched dispute
+costs about **₹200** to review — computed at the measured ESCALATE rate of
+5.62% alone, so it is an *upper* bound; any non-zero withheld rate lowers it.
+For scale, `representment_cost_inr`'s own breakdown already budgets ₹150 of
+analyst time per contested dispute. An advantage that survives only while a
+review costs less than ₹200 is a thin one, and it is stated here rather than
+left for a reader to derive.
+
+The withheld rate itself is only half measurable. Its reason-code component
+is exactly **0%** on this dataset (the generator emits only codes the system
+has an evidence strategy for — asserted in
+`tests/test_eval_sweep_assumptions.py`). Its letter-drafting component is
+**currently unmeasured**: the only measurement of it was invalidated by the
+Phase 0 schema and prompt changes and needs a live API key to redo. Modelling
+it would have meant inventing a rate; it is excluded and named instead.
+
+**2. Whether a filed contest would be accepted at all.** Razorpay's contest
+endpoint requires at least one document id when `action="submit"`, and this
+project has no document-upload pipeline, so it sends none. **A contest filed
+by this system today would very likely be rejected by the live API.** Every
+absolute "rupees recovered" figure above therefore describes what the policy
+*would* recover if its filings were accepted. The *comparison* is unaffected —
+baseline A files through the same client and inherits the same gap — but the
+absolute totals are contingent on a component that does not exist. Recorded
+in code as `eval.cost_sensitivity.SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED
+= False`, with a test that keeps it false until the upload path is built.
+
+Full table: `DECISIONS.md`'s 2026-09-02 paired-estimator entry; raw data in
+`data/eval/cost_sensitivity_median_iqr.csv` after running the command above.
 
 ## What this dataset cannot tell you
 

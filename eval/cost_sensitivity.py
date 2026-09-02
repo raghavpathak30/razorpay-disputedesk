@@ -24,6 +24,37 @@ both the rupee and the precision/recall numbers. With `ESCALATE_MODE =
 "naive_contest"`, escalated rows are credited as contested for recovery, so
 they count as positive predictions here too.
 
+What this sweep assumes, stated here because both assumptions were
+implicit until 2026-09-02 and both are load-bearing on every rupee figure
+below (remediation item 1.0):
+
+**1. Every CONTEST/ESCALATE decision results in a filed representment.**
+Phase 0 added a `withheld_for_review` outcome - a dispute the policy engine
+decided to contest, whose evidence packet was not fit to file, goes to a
+person and nothing reaches the card network. That path is **excluded** from
+this sweep rather than modelled, and the reason is that only half of the
+withheld rate is measurable:
+
+- The reason-code half is exactly **zero** on every dataset this sweep
+  scores: the generator emits only the four codes with an evidence strategy
+  (pinned by `tests/test_eval_sweep_assumptions.py`).
+- The letter-drafting half is **currently unmeasured**. Its only empirical
+  input was the 2026-09-01 letter-drafting reliability run, which Phase 0
+  invalidated by changing both the output schema and the prompt, and which
+  cannot be re-measured without a live API key.
+
+Modelling it would mean choosing a withheld rate with no measurement behind
+it and letting that guess propagate into a headline. Excluding it and saying
+so is the defensible option - but the exclusion is not neutral: it can only
+*overstate* the automated system's advantage, never understate it, because
+every withheld dispute is credited a filing that did not happen and charged
+no human-review cost for the review that did.
+`break_even_human_review_cost_inr` below turns that into a number a reader
+can check the claim against.
+
+**2. Every filed representment is accepted for review by Razorpay.** This
+one is currently **false** - see `SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED`.
+
 The ESCALATE rate (fraction of holdout rows `decide()` sends to
 `Decision.ESCALATE`) is also reported per swept cost, for the same reason
 precision/recall is: it's a property of the decisions actually made at that
@@ -51,8 +82,53 @@ from eval.business_metrics import (
     recovered_rupees,
 )
 from eval.harness import LABEL_COLUMN, run_seed_pipeline
+from eval.paired import paired_difference
 
 ESCALATE_MODE = "naive_contest"
+
+SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED = False
+"""Whether a contest this system files would actually be accepted for review.
+
+Every recovered rupee in this sweep is credited to a contest that was filed
+and taken up. Razorpay's contest endpoint documents that `action="submit"`
+requires at least one document id across the evidence fields
+(https://razorpay.com/docs/api/disputes/contest/, verified 2026-09-02), and
+`disputedesk/client/razorpay.py` sends none, because this project never built
+a document-upload pipeline (ARCHITECTURE.md "Known gaps").
+
+So this flag is `False`: the sweep's recovered-rupee figures describe what the
+policy *would* recover if its filings were accepted, and today they would very
+likely be rejected. That does not invalidate the *comparison* - baseline A
+files through the same client and inherits the same gap, so the relative
+advantage is unaffected - but it does mean the absolute
+"rupees recovered per 1,000 disputes" figures are contingent on a component
+that does not exist. Recorded as a constant rather than prose so a future
+change that builds the upload path has an obvious place to flip, and so
+flipping it is a deliberate claim rather than a silent one."""
+
+
+def break_even_human_review_cost_inr(
+    advantage_per_1000_inr: float, human_touched_rate: float
+) -> float:
+    """The per-review cost at which the policy's advantage over baseline A is
+    exactly cancelled by the human time the sweep does not charge for.
+
+    `human_touched_rate` is the fraction of holdout rows a person must handle
+    without an automated filing being produced: the ESCALATE rate, plus the
+    withheld-for-review rate once that is measurable. The sweep charges those
+    rows nothing, so the advantage survives only while a review costs less
+    than this.
+
+    Returns `inf` when no row is human-touched (nothing is being excluded) and
+    `0.0` when the advantage is already non-positive (there is no advantage
+    for a review cost to erode, and returning a positive number there would
+    read as a margin that does not exist).
+    """
+    if advantage_per_1000_inr <= 0.0:
+        return 0.0
+    if human_touched_rate <= 0.0:
+        return float("inf")
+    return advantage_per_1000_inr / (1000.0 * human_touched_rate)
 
 
 def _predicted_positive(decisions: np.ndarray) -> np.ndarray:
@@ -137,11 +213,51 @@ def sweep_representment_cost(
     return pd.DataFrame(rows)
 
 
-def summarize_sweep(results: pd.DataFrame) -> pd.DataFrame:
+def _paired_advantage_rows(results: pd.DataFrame, random_state: int) -> pd.DataFrame:
+    """One paired comparison per swept cost: policy minus baseline A, seed by
+    seed. Sorted by seed on both sides so element `i` of each arm is the same
+    seed - the pairing is the whole point and must not depend on groupby's
+    row order.
+    """
+    rows = []
+    for cost, group in results.groupby("representment_cost_inr"):
+        ordered = group.sort_values("seed")
+        paired = paired_difference(
+            ordered["policy_recovered_per_1000_inr"].to_numpy(),
+            ordered["baseline_a_recovered_per_1000_inr"].to_numpy(),
+            random_state=random_state,
+        )
+        rows.append(
+            {
+                "representment_cost_inr": cost,
+                "n_seeds": paired.n_pairs,
+                "advantage_paired_mean": paired.mean_difference,
+                "advantage_paired_median": paired.median_difference,
+                "advantage_ci_low": paired.ci_low,
+                "advantage_ci_high": paired.ci_high,
+                "advantage_n_positive": paired.n_positive,
+                "advantage_excludes_zero": paired.excludes_zero,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def summarize_sweep(results: pd.DataFrame, random_state: int = 0) -> pd.DataFrame:
     """Median and IQR of both recovered-rupee series, the policy's own
     precision/recall (ESCALATE folded in per `_predicted_positive`), the
-    ESCALATE rate itself, and the policy's advantage over baseline A, one row
-    per cost value.
+    ESCALATE rate itself, and - the headline - the **paired** advantage over
+    baseline A, one row per cost value.
+
+    The advantage columns replaced `policy_advantage_median`
+    (`median(policy) - median(baseline_a)`) on 2026-09-02. That statistic
+    threw away the pairing this sweep is built on: every seed scores both arms
+    on the identical holdout, so seed-to-seed variation is shared and a
+    difference of medians leaves all of it in. It also had no interval, which
+    is why a per-point sign change was read as noise rather than tested. It is
+    removed rather than kept alongside, so nothing can quote it by accident.
+
+    `random_state` fixes the bootstrap resampling so a reported interval
+    reproduces exactly; it is a reporting parameter, not a tuning one.
     """
     summary = (
         results.groupby("representment_cost_inr")
@@ -163,9 +279,22 @@ def summarize_sweep(results: pd.DataFrame) -> pd.DataFrame:
             escalate_rate_q75=("policy_escalate_rate", lambda s: s.quantile(0.75)),
         )
         .reset_index()
-        .sort_values("representment_cost_inr")
     )
-    summary["policy_advantage_median"] = summary["policy_median"] - summary["baseline_a_median"]
+    summary = summary.merge(
+        _paired_advantage_rows(results, random_state), on="representment_cost_inr", how="left"
+    ).sort_values("representment_cost_inr")
+
+    # The human-review cost at which the paired advantage is cancelled by the
+    # time this sweep does not charge for (see the module docstring's
+    # assumption 1). Computed at the *measured* human-touched rate - the
+    # ESCALATE rate alone - so it is an upper bound: any non-zero withheld
+    # rate lowers it further.
+    summary["break_even_human_review_cost_inr"] = [
+        break_even_human_review_cost_inr(advantage, rate)
+        for advantage, rate in zip(
+            summary["advantage_paired_mean"], summary["escalate_rate_median"], strict=True
+        )
+    ]
     return summary
 
 
