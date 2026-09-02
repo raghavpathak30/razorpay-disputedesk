@@ -2554,3 +2554,147 @@ region, the honest report is that the gate's cost cannot be resolved at this n.
 **Status:** UNVERIFIED (not run — no API key in this environment).
 
 ---
+
+## 2026-09-03 — Grounding-gate corpus resized before the key run; Class B framing corrected
+
+**This supersedes the "n and power" paragraph of the entry above.** That figure — n=120 — is
+kept visible above rather than edited in place; this entry is why it is not the number the key
+run should use.
+
+**The power problem, worked through properly.** The entry above eyeballed n=120 as "narrow
+enough to place the rate against the 2.3% budget." Computed with the same `eval.grounding_stats.wilson`
+the gate's own report uses, the 95% upper bound at **zero** observed false flags is:
+
+| n (clean letters) | Wilson upper bound at 0 flags | clears the 2.3% budget |
+|---:|---:|---|
+| 120 | 3.10% | no — already past budget at zero observed flags |
+| 130 | 2.87% | no |
+| 150 | 2.50% | no |
+| 200 | 1.88% | yes, with room |
+| 250 | 1.51% | yes, comfortably |
+
+n=120 was worse than it looked: even a perfectly clean run (0/120 flagged) produces an interval
+whose upper bound sits *above* the 2.3% budget, so the eval could not have cleared the gate even
+in the best case it could observe. That is a sizing defect, not a result — it says nothing about
+the gate's actual rate, only that the instrument could not have resolved it favourably.
+
+**Decision: draft 250 letters, not 120.** `eval/run_grounding_draft.py --n-letters` default
+raised 120 → 250. Every drafted letter with `provenance="model"` yields exactly one clean corpus
+item (`eval.grounding_corpus.build_corpus`), so 250 drafts (allowing for the rare fallback-drafted
+letter being excluded — measured near 0% failure rate at the current prompt per the 2026-09-01
+"Letter-drafting reliability, re-measured" entry) puts the clean arm at 250, giving a 1.51% upper
+bound if the observed rate is zero — comfortably clear of 2.3%. Class A and Class B ride along at
+the same n (up to 250 each) since they are drawn from the same drafted set; their detection rates
+are illustrative and do not need this level of power (see the reframe below for Class B
+specifically).
+
+**Cost consequence, stated plainly.** `docs/AI-SURFACE.md`'s original design estimated ~360 live
+calls for the grounding-gate measurement (n≈120, one corpus). At n=250: drafting is 2 calls per
+letter (normalise + draft) = 500 calls; grading the corpus is one call per item, and a fully
+mentions-all-fields corpus is 3×250 = 750 items = 750 calls. **≈1,250 live calls total**, roughly
+3.5× the original estimate. This is a direct, arithmetic consequence of the power requirement
+above, not scope creep — the original n could not have produced a resolvable answer to the
+question the gate exists to answer.
+
+**Reporting is now placed against the budget explicitly, not left for a reader to compute.**
+`eval.review_cost` gained `MEASURED_ESCALATE_RATE`, `MEASURED_CONTEST_RATE`,
+`MEASURED_ADVANTAGE_PER_1000_INR` (the same figures as the entry above, named so this comparison
+and that one cannot silently drift apart), `ANALYST_TIME_BUDGET_INR = 150.0` (the analyst-time
+component already named in `disputedesk/policy/config.py`'s `REPRESENTMENT_COST_INR` comment —
+not a new figure invented for this comparison), and `budget_verdict(observed: Rate) -> str`,
+which reports one of three outcomes from the interval, not the point estimate alone: **clears**
+(the whole interval sits under budget), **misses — not economically viable at this operating
+point** (the whole interval sits over budget), or **straddles — not resolved at this n** (neither).
+`eval.grounding_eval.report()` now prints this line immediately under the false-flag rate.
+
+**If the measured rate misses the budget, that is the reported finding, in those words.** A gate
+that costs more in review time than the policy recovers is not economically viable at the current
+review-cost estimate, and that is a publishable result on its own — it does not weaken the
+arithmetic in the 2026-09-02 "Policy branch rates measured" entry, it confirms that entry's
+budget was tight for a reason.
+
+**Class B reframed: lead with the structure, not the 6/12 margin.** The prior entry's framing —
+"the baseline catches 6 of 12 templates" — invites exactly the objection made against it: a reader
+can always say the other six were chosen to be invisible to the baseline, and no amount of adding
+templates fixes that, because the same objection applies to any finite set. The argument that
+does not have that weakness is structural, and it was always the real one: **a regex baseline
+detects lexical shape** — a tracking-number pattern, a signature keyword, a date format. **A
+plain declarative claim** ("the customer is enrolled in our loyalty programme") **has no
+distinguishing shape to detect**, by definition of what a regex can represent. The baseline's
+ceiling on that half of Class B is therefore set by the expressive limits of pattern matching,
+not by which twelve templates happen to be committed. The 6/12 split stays published exactly as
+it was — it is real, measured, and worth keeping — but it now illustrates the structural point
+rather than carrying the argument itself.
+
+**Explicit disclaimer, going in wherever Class B's numbers are reported:** the measured Class B
+margin between the gate and the baseline is construction-dependent — a function of which twelve
+templates this corpus happens to contain — and should be read as *an illustration* of the
+structural argument above, not as independent evidence for it. Class A stays as designed:
+near-parity between the gate and the baseline there is the *expected* result (both arms are
+built to catch an enumerable, recorded-field flip), and is reported as a control, not a finding.
+
+**The exact commands for the run, in order — 250, not 120:**
+
+```
+python -m eval.run_grounding_draft --n-letters 250 --seed 0   # needs LLM_API_KEY
+python -m eval.run_grounding_eval --seed 0                     # needs LLM_API_KEY
+python -m eval.run_grounding_eval --baseline-only               # no key needed
+```
+
+**Reproduce:** `pytest tests/test_eval_review_cost.py` pins `false_flag_budget()` at 2.30% and
+`budget_verdict`'s three-way classification; the power table above is reproducible with
+`python -c "from eval.grounding_stats import wilson; [print(n, wilson(0, n, '').ci_high) for n in (120,130,150,200,250,300)]"`.
+
+**Status:** DECIDED (corpus size and reporting format). Measurement itself is still UNVERIFIED —
+same reason as the entry above: no `LLM_API_KEY` in this environment.
+
+---
+
+## 2026-09-03 — Five grounding-gate files landed inside an unrelated commit; not repaired by rewriting history
+
+**What happened.** A second session, working on the leakage guard (Phase 2, unrelated to the
+grounding gate), committed `0ea4a4d` (`fix(2.0-2.5): rebuild the leakage guard; remove tests that
+could not fail`, 2026-09-02T21:41:18+05:30) while five files from this session's still-uncommitted
+grounding-gate work were present on disk mid-edit. `git add -A`-shaped staging in that commit swept
+them in:
+
+- `disputedesk/evidence/grounding.py`
+- `disputedesk/evidence/letter.py` (the `FAILED_GROUNDING` provenance addition)
+- `disputedesk/evidence/prompts/grounding_gate_v1.txt`
+- `tests/test_evidence_grounding.py`
+- `tests/test_evidence_grounding_security.py`
+
+This session's own commit, `1e72158` (`feat: grounding gate - a letter must trace to the record
+before it can be filed`, 2026-09-03T00:59:14+05:30), then landed the rest of the same feature
+(`disputedesk/api/pipeline.py`, `disputedesk/evidence/assembler.py`, `eval/grounding_*.py`,
+`eval/review_cost.py`, the remaining tests) on top, with the five swept files already present
+from `0ea4a4d` and therefore showing as unmodified in that second commit's diff. The result: one
+feature's implementation is split across two commits with unrelated commit messages, neither of
+which names the other half.
+
+**Why history was not rewritten.** Rebasing or amending `0ea4a4d` to remove the swept files would
+touch a commit another session's own history and messages describe, and CLAUDE.md's git protocol
+reserves rebase/amend for the author's own not-yet-shared work. The tree is correct and green as
+committed; the defect is entirely in the historical record being hard to read, not in any file's
+content.
+
+**Verified after both commits landed:** `pytest` — 1127 passed; `ruff check .` — all checks
+passed; `ruff format --check` — no diffs; `python -m disputedesk.cli.demo --deterministic-only`
+run twice, byte-identical output (the same check CI's "Demo reproducibility (Segment A)" step
+runs).
+
+**Decision, going forward: no concurrent sessions against this tree.** This is the second
+collision inside one calendar day — the first split the grounding gate across two commits: this
+session, working alone, found `ARCHITECTURE.md` modified on disk three minutes after `1e72158`
+landed (an uncommitted TF-IDF-figure sync, correct and consistent with the already-published
+number, left in place rather than reverted or claimed) with two other `claude` processes visible
+on the machine, and found `DECISIONS.md` itself modified on disk mid-edit while writing the
+corpus-resize entry above. A half-applied edit sitting inside an unrelated commit is exactly the
+failure mode `git blame` and a commit message both stop working for, and it is expensive to find
+once the session that could explain it has ended.
+
+**Reproduce:** `git show --stat 0ea4a4d | grep -E 'grounding|letter\.py|prompts/'` shows the five
+swept files; `git log --oneline -5` shows the two commits and everything between them.
+**Status:** RECORDED (2026-09-03).
+
+---

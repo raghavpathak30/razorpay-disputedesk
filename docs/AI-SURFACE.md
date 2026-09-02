@@ -21,6 +21,15 @@ changed since:
   constraint on the feature. See `DECISIONS.md`, 2026-09-02.
 - §0.3's freeze concern was resolved by reopening Phase 5 for this surface only and
   re-freezing on 2026-09-02.
+- **2026-09-03 — the eval corpus above (§2.1's "n≈120") is undersized and was resized to
+  n=250 before the key run.** At n=120 the 95% Wilson upper bound on the false-flag rate,
+  even if zero letters are flagged, sits *above* the 2.3% budget — the eval could not have
+  cleared the gate in its best observable case. See `DECISIONS.md`'s 2026-09-03 "Grounding-gate
+  corpus resized before the key run" entry for the full power table and the corrected cost
+  (~1,250 live calls, not ~360). The same entry also reframes §2.1's Class B claim to lead with
+  the structural argument (a regex has no shape to detect in a plain declarative sentence)
+  rather than the 6/12 template split, which invites the objection that the six missed
+  templates were chosen to be missed.
 
 The original document follows unchanged.
 

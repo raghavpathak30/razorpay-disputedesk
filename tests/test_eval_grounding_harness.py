@@ -124,6 +124,16 @@ class TestReport:
         assert "Class A" in text and "Class B" in text
         assert "could not reach a verdict" in text
 
+    def test_the_report_places_the_false_flag_rate_against_the_budget(self):
+        """DECISIONS.md 2026-09-03: the false-flag rate must be placed against
+        the review-cost budget explicitly, in the same table, not left for a
+        reader to compute from a separate module."""
+        items = build_corpus([(LETTER, CONTEXT)] * 4, seed=0)
+        scores = score_corpus(items, FakeLLMClient([GROUNDED]))
+        text = report(items, scores)
+        assert "budget at INR" in text
+        assert "CLEARS" in text or "MISSES" in text or "STRADDLES" in text
+
     def test_token_usage_is_reported_per_letter_when_available(self):
         items = build_corpus([(LETTER, CONTEXT)] * 2, seed=0)
         scores = score_corpus(items, FakeLLMClient([GROUNDED]))

@@ -11,7 +11,14 @@ import math
 
 import pytest
 
+from eval.grounding_stats import wilson
 from eval.review_cost import (
+    ANALYST_TIME_BUDGET_INR,
+    MEASURED_ADVANTAGE_PER_1000_INR,
+    MEASURED_CONTEST_RATE,
+    MEASURED_ESCALATE_RATE,
+    budget_verdict,
+    false_flag_budget,
     false_flag_rate_at_review_cost,
     human_touched_rate,
     review_cost_curve,
@@ -100,3 +107,84 @@ class TestInverse:
 
     def test_a_non_positive_advantage_has_no_answer(self):
         assert math.isnan(false_flag_rate_at_review_cost(150.0, ESCALATE, CONTEST, 0.0))
+
+
+class TestNamedMeasuredConstants:
+    def test_the_named_constants_agree_with_this_files_own_local_copies(self):
+        """The module's named constants and this file's local `ESCALATE` /
+        `CONTEST` / `ADVANTAGE` describe the same measured sweep run - if
+        they ever diverge, the divergence must be loud, not silent."""
+        assert MEASURED_ESCALATE_RATE == ESCALATE
+        assert MEASURED_CONTEST_RATE == CONTEST
+        assert MEASURED_ADVANTAGE_PER_1000_INR == ADVANTAGE
+
+    def test_the_analyst_time_budget_is_the_repo_s_own_figure(self):
+        assert ANALYST_TIME_BUDGET_INR == 150.0
+
+
+class TestFalseFlagBudget:
+    def test_the_budget_reproduces_the_recorded_2_3_percent(self):
+        """DECISIONS.md 2026-09-02/03 quotes 2.3% at the ₹150 analyst-time
+        figure. Pinned here so a later edit to the measured constants above
+        cannot silently move the number every other document quotes."""
+        assert false_flag_budget() == pytest.approx(0.023, abs=0.0005)
+
+    def test_the_budget_matches_calling_the_inverse_directly(self):
+        """`false_flag_budget()` is a fixed-argument convenience wrapper
+        around `false_flag_rate_at_review_cost` - they must never disagree."""
+        assert false_flag_budget() == false_flag_rate_at_review_cost(
+            ANALYST_TIME_BUDGET_INR, MEASURED_ESCALATE_RATE, MEASURED_CONTEST_RATE, ADVANTAGE
+        )
+
+
+class TestBudgetVerdict:
+    def test_a_rate_whose_whole_interval_sits_under_budget_clears(self):
+        rate = wilson(0, 250, "false-flag")
+        verdict = budget_verdict(rate)
+        assert "CLEARS" in verdict
+        assert rate.ci_high < false_flag_budget()
+
+    def test_a_rate_whose_whole_interval_sits_over_budget_misses(self):
+        rate = wilson(40, 250, "false-flag")  # 16%, nowhere near the ~2.3% budget
+        verdict = budget_verdict(rate)
+        assert "MISSES" in verdict
+        assert "not economically viable" in verdict
+        assert rate.ci_low > false_flag_budget()
+
+    def test_a_rate_whose_interval_straddles_the_budget_is_unresolved(self):
+        """The whole point of resizing the corpus (DECISIONS.md 2026-09-03):
+        an interval that straddles the budget is a real, distinct outcome -
+        not silently rounded to a clear or a miss."""
+        rate = wilson(6, 250, "false-flag")  # 2.4%, an interval that straddles ~2.3%
+        assert rate.ci_low < false_flag_budget() < rate.ci_high
+        verdict = budget_verdict(rate)
+        assert "STRADDLES" in verdict
+        assert "not resolved at this n" in verdict
+
+    def test_the_verdict_always_carries_the_point_estimate_and_interval(self):
+        rate = wilson(3, 250, "false-flag")
+        verdict = budget_verdict(rate)
+        assert f"{rate.value:.4f}" in verdict
+        assert f"{rate.ci_low:.4f}" in verdict
+        assert f"{rate.ci_high:.4f}" in verdict
+
+
+class TestCorpusResizePower:
+    """DECISIONS.md 2026-09-03: n=120 could not have cleared the budget even
+    at zero observed flags. Pinned so a future change to either the corpus
+    default or the budget cannot silently reopen that sizing defect."""
+
+    def test_n_120_cannot_clear_the_budget_even_at_zero_flags(self):
+        assert wilson(0, 120, "").ci_high > false_flag_budget()
+
+    def test_n_250_clears_the_budget_at_zero_flags_with_room(self):
+        assert wilson(0, 250, "").ci_high < false_flag_budget()
+
+    def test_the_default_draft_count_matches_the_corpus_that_was_sized(self):
+        """The power calculation above is only true of the corpus this repo
+        actually builds - pins the shipped `--n-letters` default against it."""
+        import inspect
+
+        from eval.run_grounding_draft import main
+
+        assert '"--n-letters", type=int, default=250' in inspect.getsource(main)

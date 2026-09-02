@@ -37,6 +37,62 @@ from dataclasses import dataclass
 import numpy as np
 
 from eval.cost_sensitivity import break_even_human_review_cost_inr
+from eval.grounding_stats import Rate
+
+# The measured sweep values at `representment_cost_inr=400` (seeds 0-19,
+# n_rows=15000): DECISIONS.md 2026-09-02 "Policy branch rates measured, and
+# what the gate's false-flag rate costs". Named here, not re-measured, so the
+# budget comparison below and the DECISIONS.md entry it is quoted from cannot
+# silently drift apart.
+MEASURED_ESCALATE_RATE = 0.056189
+MEASURED_CONTEST_RATE = 0.805225
+MEASURED_ADVANTAGE_PER_1000_INR = 11210.0
+
+# `disputedesk/policy/config.py`'s `REPRESENTMENT_COST_INR` module comment
+# breaks its INR 400 into three named components; this is the middle one -
+# "analyst time to assemble and submit the packet". It is the review-cost
+# figure this project already has a stated estimate for, so it is the
+# reference point for "is the gate's false-flag rate economically viable",
+# not a new number invented for this comparison. Not imported from
+# `policy/config.py` because that module comments the figure inline rather
+# than naming it as a constant; re-pricing it is out of scope here.
+ANALYST_TIME_BUDGET_INR = 150.0
+
+
+def false_flag_budget() -> float:
+    """The gate false-flag rate at which the policy's measured advantage is
+    exactly cancelled by `ANALYST_TIME_BUDGET_INR` per review, at the measured
+    branch rates above. `2.3%` as of 2026-09-02 - see the module docstring's
+    "gap this closes" for why this budget, not a different one."""
+    return false_flag_rate_at_review_cost(
+        ANALYST_TIME_BUDGET_INR,
+        MEASURED_ESCALATE_RATE,
+        MEASURED_CONTEST_RATE,
+        MEASURED_ADVANTAGE_PER_1000_INR,
+    )
+
+
+def budget_verdict(observed: Rate) -> str:
+    """Where a measured false-flag rate (with its Wilson interval) sits
+    against `false_flag_budget()`, stated so the interval - not just the
+    point estimate - decides the verdict.
+
+    Three outcomes, not two: an interval can straddle the budget, and that is
+    a real, reportable outcome ("cannot be resolved at this n"), not a case to
+    force into "clears" or "misses".
+    """
+    budget = false_flag_budget()
+    if observed.ci_high < budget:
+        verdict = "CLEARS the budget"
+    elif observed.ci_low > budget:
+        verdict = "MISSES the budget - not economically viable at this operating point"
+    else:
+        verdict = "STRADDLES the budget - not resolved at this n"
+    return (
+        f"budget at INR {ANALYST_TIME_BUDGET_INR:.0f}/review (measured sweep rates, "
+        f"DECISIONS.md 2026-09-02): {budget:.4f} ({budget * 100:.2f}%) vs. observed "
+        f"{observed.value:.4f} [{observed.ci_low:.4f}, {observed.ci_high:.4f}] -> {verdict}"
+    )
 
 
 @dataclass(frozen=True)

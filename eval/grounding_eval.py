@@ -28,6 +28,7 @@ from disputedesk.evidence.llm import LLMClient
 from eval.grounding_baseline import baseline_flags
 from eval.grounding_corpus import CorpusItem, composition
 from eval.grounding_stats import PairedComparison, paired_comparison, wilson
+from eval.review_cost import budget_verdict
 
 CLASS_LABELS = {
     "clean": "false-flag on clean letters",
@@ -121,7 +122,9 @@ def report(items: list[CorpusItem], scores: pd.DataFrame, usage: list[dict] | No
     lines.append(f"corpus: n={table['n_items']} items, by class {table['by_class']}")
     lines.append("")
 
-    lines.append(str(false_flag_rate(scores)))
+    rate = false_flag_rate(scores)
+    lines.append(str(rate))
+    lines.append(budget_verdict(rate))
     lines.append("")
     for item_class in ("clean", "contradiction", "unrecorded"):
         if (scores["item_class"] == item_class).any():

@@ -11,7 +11,18 @@ statistics) then reproduces from the committed file with no API key.
 Makes real network calls. Never run in CI, never imported by anything under
 `tests/`.
 
-Run as `python -m eval.run_grounding_draft --n-letters 120 --seed 0`.
+**Why the default is 250, not 120.** The false-flag rate on clean letters is
+the number that decides whether the gate is economically viable
+(`eval/review_cost.py`'s ₹150-budget line, 2.3% as of DECISIONS.md
+2026-09-02). At n=120 a Wilson interval around a plausible low false-flag
+rate straddles that budget and resolves nothing. At n=250 clean letters, the
+95% Wilson upper bound if zero letters are flagged is about 1.5% - comfortably
+under 2.3%, so a genuinely low rate is distinguishable from the budget rather
+than merely consistent with clearing it. See DECISIONS.md's 2026-09-03
+"Grounding-gate corpus resized before the key run" entry for the full power
+table.
+
+Run as `python -m eval.run_grounding_draft --n-letters 250 --seed 0`.
 """
 
 import argparse
@@ -40,7 +51,7 @@ CONTEXT_FIELDS = (
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Draft letters for the grounding-gate corpus.")
-    parser.add_argument("--n-letters", type=int, default=120)
+    parser.add_argument("--n-letters", type=int, default=250)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--sleep-seconds", type=float, default=5.0)
     parser.add_argument(
