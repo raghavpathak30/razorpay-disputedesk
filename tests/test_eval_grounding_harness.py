@@ -157,3 +157,40 @@ class TestCorpusScoringIsPaired:
         assert list(scores["item_id"]) == [i.item_id for i in items]
         assert list(scores["item_class"]) == [i.item_class for i in items]
         assert np.all(scores["gate_flagged"].to_numpy() == False)  # noqa: E712
+
+
+class TestOverLengthCorpusText:
+    """Found while running the real n=250 corpus (Phase 3 key run,
+    2026-09-03): `eval.grounding_corpus.make_unrecorded` inserts a fabricated
+    sentence into an already-drafted letter, which can push the *mutated*
+    text past `DraftedLetter`'s 1,000-character submission ceiling even when
+    the original drafted letter was comfortably under it. `score_item`
+    reconstructs a `DraftedLetter` from the corpus text to grade it, so any
+    such item crashed the whole eval run with a `pydantic.ValidationError`
+    instead of being scored.
+
+    The corpus text is a deliberate test perturbation, never filed anywhere -
+    grading it does not require it to satisfy the production submission
+    schema, only that the grader can read its text.
+    """
+
+    def test_score_item_does_not_crash_on_corpus_text_over_the_submission_limit(self):
+        over_limit_text = LETTER + " " + ("x" * 1000)
+        assert len(over_limit_text) > 1000
+        item = _item(item_class="unrecorded", text=over_limit_text)
+
+        score = score_item(item, FakeLLMClient([GROUNDED]))
+
+        assert score.gate_failed is False
+
+    def test_score_corpus_does_not_crash_when_one_item_is_over_the_limit(self):
+        items = [
+            _item(item_class="clean", text=LETTER),
+            _item(item_class="unrecorded", text=LETTER + " " + ("x" * 1000)),
+        ]
+        import pandas as pd
+
+        scores = score_corpus(items, FakeLLMClient([GROUNDED, GROUNDED]))
+
+        assert isinstance(scores, pd.DataFrame)
+        assert len(scores) == 2

@@ -23,7 +23,6 @@ from dataclasses import dataclass
 import pandas as pd
 
 from disputedesk.evidence.grounding import grade_letter
-from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
 from disputedesk.evidence.llm import LLMClient
 from eval.grounding_baseline import baseline_flags
 from eval.grounding_corpus import CorpusItem, composition
@@ -48,20 +47,30 @@ class ItemScore:
     n_assertions: int
 
 
-def _as_letter(item: CorpusItem) -> DraftedLetter:
-    """Corpus text as a submittable letter, so the gate sees exactly what it
-    would see in production. `MODEL` provenance is correct here: these letters
-    *are* the drafting model's own validated output, and Class A mutates the
-    record rather than the letter."""
-    return DraftedLetter(
-        letter_text=item.letter_text,
-        cites_evidence_types=("explanation_letter",),
-        provenance=LetterProvenance.MODEL,
-    )
+class _GradeableText:
+    """Duck-types `DraftedLetter` for exactly what `grounding.build_prompt`
+    reads (`.letter_text`) - nothing else.
+
+    Not a `DraftedLetter`, deliberately (found running the real n=250 corpus,
+    2026-09-03): `make_unrecorded` (`eval/grounding_corpus.py`) inserts a
+    fabricated sentence into an already-drafted letter, which can push the
+    *mutated* corpus text past `DraftedLetter`'s 1,000-character submission
+    ceiling even when the original drafted letter was comfortably under it.
+    Corpus text is a deliberate test perturbation that is never filed
+    anywhere - grading it does not require it to satisfy the production
+    submission schema, only that the grader can read it. Routing it through
+    `DraftedLetter` crashed the whole eval run with a `ValidationError` on any
+    such item instead of scoring it.
+    """
+
+    __slots__ = ("letter_text",)
+
+    def __init__(self, letter_text: str) -> None:
+        self.letter_text = letter_text
 
 
 def score_item(item: CorpusItem, llm_client: LLMClient) -> ItemScore:
-    verdict, failure = grade_letter(_as_letter(item), item.context, llm_client)
+    verdict, failure = grade_letter(_GradeableText(item.letter_text), item.context, llm_client)
     # A gate that cannot reach a verdict withholds the letter, so for scoring
     # it counts as a flag - that is what production does, and scoring it any
     # other way would report a gate that is not the one being shipped.
