@@ -2031,3 +2031,46 @@ so the guards themselves needed the same treatment.
 establishes that these three guards are load-bearing; it says nothing about
 coverage of the rest of the suite.
 **Status:** CONFIRMED-RAN (2026-09-02).
+
+---
+
+## 2026-09-02 — WITHDRAWN: letter-drafting reliability (v1 prompt, 4,000-char schema)
+
+**Withdraws:** the 2026-09-01 "Letter-drafting reliability, re-measured after
+the fix" entry's headline result — both demo fixtures passing 20/20 with zero
+repairs needed.
+
+**Why:** it was measured against `explanation_letter_v1` and a
+4,000-character `ExplanationLetterOutput` ceiling. The Phase 0 remediation
+(2026-09-02) replaced both — the prompt is now `explanation_letter_v2` and the
+ceiling is the card network's real 1,000 characters. The number therefore
+describes a system that no longer exists, and re-running this repository at
+any commit after 2026-09-02 cannot reproduce it. A number that cannot
+reproduce is worse than a missing one.
+
+**Scope of the withdrawal — deliberately narrow.** Only the pass-rate figure
+is withdrawn. Everything in that entry about the *root cause* still holds and
+is not affected: that `usage.completion_tokens_details.reasoning_tokens`
+counts against the same completion budget as visible output, and that Groq
+was honouring the deprecated `max_tokens` alias rather than ignoring it. Both
+were verified live against the provider, and neither depends on the prompt or
+the schema.
+
+**Not a README change:** the figure was never quoted in `README.md` or
+`ARCHITECTURE.md` — checked by grep across both. It lived only here. So the
+withdrawal costs the submission nothing, which is exactly why it was taken
+rather than left standing as "stale".
+
+**To restore:** re-measure against v2 and append a fresh entry.
+
+    export LLM_API_KEY=...   # Groq
+    export LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+    export LLM_MODEL=openai/gpt-oss-20b
+    python -m eval.run_llm_letter_validation_reliability
+
+Two directions are plausible and neither is predicted here: a tighter,
+explicitly-stated character budget may raise the first-draft pass rate, or
+1,000 characters may prove a harder target to hit while still clearing the
+50-character floor.
+
+**Status:** WITHDRAWN.
