@@ -26,6 +26,7 @@ def _model_letter(text: str = "a fully drafted, model-authored explanation lette
         provenance=LetterProvenance.MODEL,
     )
 
+
 RAZORPAY_KEY_ID = "rzp_test_id"
 RAZORPAY_KEY_SECRET = "rzp_test_secret"
 
@@ -78,9 +79,9 @@ def test_accept_sends_basic_auth_and_no_body(monkeypatch):
     assert seen["method"] == "POST"
     assert seen["url"] == "https://api.razorpay.com/v1/disputes/disp_1/accept"
     assert seen["body"] in (b"", b"null")
-    expected_auth = "Basic " + base64.b64encode(
-        f"{RAZORPAY_KEY_ID}:{RAZORPAY_KEY_SECRET}".encode()
-    ).decode()
+    expected_auth = (
+        "Basic " + base64.b64encode(f"{RAZORPAY_KEY_ID}:{RAZORPAY_KEY_SECRET}".encode()).decode()
+    )
     assert seen["auth_header"] == expected_auth
 
 

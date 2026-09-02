@@ -28,6 +28,9 @@ CI_N_ROWS = 5000
 CI_COSTS = [50.0, 200.0, 400.0]
 
 # cost -> (paired mean, paired median, ci low, ci high, n positive)
+# GOLDEN FIXTURE - pinned against disputedesk.generator output, seeds 0-7,
+# n_rows=5000. If eval/generator_fingerprint.py's committed fingerprint ever
+# changes, re-run and re-commit these values too (see that module's docstring).
 COMMITTED_PAIRED_ADVANTAGE = {
     50.0: (-112.5258, 142.9187, -534.8206, 251.2606, 5),
     200.0: (-3596.1703, -1994.2882, -7515.7543, -268.0576, 2),
@@ -75,9 +78,9 @@ def test_the_bootstrap_interval_is_reproducible_across_runs(summary):
     """The committed CI bounds above are only meaningful if the bootstrap is
     deterministic - otherwise this whole file would flake.
     """
-    rerun = summarize_sweep(
-        sweep_representment_cost(CI_SEEDS, CI_N_ROWS, CI_COSTS)
-    ).set_index("representment_cost_inr")
+    rerun = summarize_sweep(sweep_representment_cost(CI_SEEDS, CI_N_ROWS, CI_COSTS)).set_index(
+        "representment_cost_inr"
+    )
 
     for cost in CI_COSTS:
         assert rerun.loc[cost, "advantage_ci_low"] == summary.loc[cost, "advantage_ci_low"]

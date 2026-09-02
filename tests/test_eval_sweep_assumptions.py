@@ -129,8 +129,7 @@ def test_the_paired_mean_matches_a_hand_rolled_computation_per_cost():
 
     at_cost = per_seed[per_seed["representment_cost_inr"] == 400.0].sort_values("seed")
     expected = (
-        at_cost["policy_recovered_per_1000_inr"]
-        - at_cost["baseline_a_recovered_per_1000_inr"]
+        at_cost["policy_recovered_per_1000_inr"] - at_cost["baseline_a_recovered_per_1000_inr"]
     ).mean()
 
     assert summary.iloc[0]["advantage_paired_mean"] == pytest.approx(expected)

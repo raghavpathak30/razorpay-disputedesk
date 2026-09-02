@@ -147,26 +147,29 @@ def _predicted_positive(decisions: np.ndarray) -> np.ndarray:
     return (decisions == Decision.CONTEST) | (decisions == Decision.ESCALATE)
 
 
-def sweep_seed(
+def score_predictions_across_costs(
     seed: int,
-    n_rows: int,
+    predicted_p: np.ndarray,
+    amount: np.ndarray,
+    won_if_contested: np.ndarray,
     costs: list[float],
-    generator_config: GeneratorConfig,
-    model_config: ModelConfig,
     low_confidence_band: tuple[float, float],
 ) -> list[dict]:
-    """One seed's train/predict cycle, then every cost in `costs` scored
-    against those same predictions - no retraining inside the loop.
-    """
-    run = run_seed_pipeline(seed, n_rows, generator_config, model_config)
-    amount = run.test_df["amount"].to_numpy()
-    won_if_contested = run.test_df[LABEL_COLUMN].to_numpy()
-    n = len(amount)
+    """Every cost in `costs` scored against one already-computed
+    `predicted_p` - no retraining inside the loop.
 
+    Split out from `sweep_seed` on 2026-09-03 (Phase 2 addendum item B) so
+    `eval.ablation` can score a restricted-feature model's predictions through
+    the exact same per-cost logic, and therefore the exact same paired
+    estimator (`summarize_sweep`), as the full-feature sweep - a second,
+    hand-copied implementation of this scoring is exactly the kind of drift
+    this remediation exists to catch.
+    """
+    n = len(amount)
     rows = []
     for cost in costs:
         config = PolicyConfig(representment_cost_inr=cost, low_confidence_band=low_confidence_band)
-        decisions = decide_batch(run.predicted_p, amount, config)
+        decisions = decide_batch(predicted_p, amount, config)
         policy_recovered = recovered_rupees(
             decisions, won_if_contested, amount, cost, escalate_mode=ESCALATE_MODE
         )
@@ -190,6 +193,25 @@ def sweep_seed(
             }
         )
     return rows
+
+
+def sweep_seed(
+    seed: int,
+    n_rows: int,
+    costs: list[float],
+    generator_config: GeneratorConfig,
+    model_config: ModelConfig,
+    low_confidence_band: tuple[float, float],
+) -> list[dict]:
+    """One seed's train/predict cycle, then every cost in `costs` scored
+    against those same predictions - no retraining inside the loop.
+    """
+    run = run_seed_pipeline(seed, n_rows, generator_config, model_config)
+    amount = run.test_df["amount"].to_numpy()
+    won_if_contested = run.test_df[LABEL_COLUMN].to_numpy()
+    return score_predictions_across_costs(
+        seed, run.predicted_p, amount, won_if_contested, costs, low_confidence_band
+    )
 
 
 def sweep_representment_cost(

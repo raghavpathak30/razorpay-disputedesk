@@ -29,6 +29,11 @@ from eval.llm_normalization_quality import FEATURE_COLUMNS, auc_of_normalized_fi
 from eval.run_extraction_comparison import LLM_ARM_FIXTURE, LLM_ARM_N_ROWS, LLM_ARM_SEED
 from eval.tfidf_baseline import comms_and_true_fraud, tfidf_auc, tfidf_out_of_fold_probabilities
 
+# GOLDEN FIXTURE - the constants and the committed CSV both pinned against
+# disputedesk.generator output at seed=0, n_rows=60. If
+# eval/generator_fingerprint.py's committed fingerprint ever changes, re-run
+# and re-commit this whole module's values too (see that module's docstring).
+
 
 @pytest.fixture(scope="module")
 def arms():

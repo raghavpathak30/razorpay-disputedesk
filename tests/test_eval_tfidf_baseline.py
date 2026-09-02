@@ -86,20 +86,22 @@ def test_the_result_shape_matches_the_llm_arms_result_shape():
     logs, labels = _planted_corpus(60)
     tfidf_result = tfidf_auc(logs, labels)
     llm_result = auc_of_normalized_fields(
-        [dict.fromkeys(
-            (
-                "claims_unauthorized_transaction",
-                "mentions_prior_bank_contact",
-                "mentions_shared_card_access",
-                "mentions_travel",
-                "is_substantive",
-                "tone_polite",
-                "tone_terse",
-            ),
-            0,
-        )
-        | {"is_substantive": int(label)}
-        for label in labels],
+        [
+            dict.fromkeys(
+                (
+                    "claims_unauthorized_transaction",
+                    "mentions_prior_bank_contact",
+                    "mentions_shared_card_access",
+                    "mentions_travel",
+                    "is_substantive",
+                    "tone_polite",
+                    "tone_terse",
+                ),
+                0,
+            )
+            | {"is_substantive": int(label)}
+            for label in labels
+        ],
         labels,
     )
 

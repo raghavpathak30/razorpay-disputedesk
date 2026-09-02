@@ -106,9 +106,7 @@ def test_false_positive_and_negative_accounting_against_an_independent_derivatio
         expected_fp_count * cost / n * 1000.0
     )
     assert row["false_negative_count"] == expected_fn_count
-    assert row["false_negative_cost_per_1000_inr"] == pytest.approx(
-        expected_fn_total / n * 1000.0
-    )
+    assert row["false_negative_cost_per_1000_inr"] == pytest.approx(expected_fn_total / n * 1000.0)
     assert row["escalated_count"] == int(low_confidence.sum())
 
 

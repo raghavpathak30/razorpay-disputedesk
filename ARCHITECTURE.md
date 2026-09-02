@@ -146,22 +146,36 @@ only ever reads `packet.explanation_letter.letter_text`, a field that only
 exists after passing through this validation path or the deterministic
 fallback.
 
-**We measured whether the LLM adds predictive value, and it does not.**
-`disputedesk/evidence/normalize_comms.py`'s typed extraction scored mean
-AUC 0.4211 (5-fold CV, n=60, live Groq calls) against `true_fraud` versus a
-TF-IDF + logistic-regression baseline's 0.6371 on the same task
-(`DECISIONS.md`'s 2026-09-01 "LLM normalisation quality vs. TF-IDF
-baseline" entry). The extraction is reliable in format (zero repairs or
-fallbacks needed across the sample) but not predictive in content — a
-diagnosed, structural reason, not noise: two of the seven typed fields sit
-near 1.0 for both classes because the generator's comms-log design makes
-the real signal a frequency tilt across near-synonymous phrasings, which a
-coarse yes/no LLM extraction collapses and a bag-of-words vectorizer
-preserves. Nothing was changed in response to this number — no prompt,
-schema, or feature-encoding edit — per that entry's own explicit note; it
-is reported as a finding, not tuned away. It is the reason this project's
-LLM footprint stayed at "draft text" rather than expanding into "extract
-structured predictive signal."
+**We measured whether the LLM's typed extraction adds predictive value, and
+at the sample size available it cannot be shown either way.** Corrected
+2026-09-03 — this section previously read "we measured ... and it does not"
+against a TF-IDF baseline of 0.6371 that had no code, no recorded n, and no
+seed anywhere in the repository (see the stale-number audit,
+`DECISIONS.md`'s 2026-09-02 entries of that name). Re-implemented and scored
+on the **same 60 items, paired**: `disputedesk/evidence/normalize_comms.py`'s
+typed extraction reaches mean AUC 0.4211 (5-fold CV, n=60, live Groq calls,
+unchanged); the TF-IDF baseline on those identical items scores 0.5104, not
+0.6371 — that figure turns out to have been a large-sample measurement
+(0.6479 at n=3,000) used as the comparator for a 60-item run. The paired
+difference is +0.1624 in TF-IDF's favour, 95% bootstrap CI −0.0648 to
++0.3858 — **the interval includes zero**, and neither arm is distinguishable
+from chance at this n. The direction survives; "the LLM does not add
+predictive value" does not, because at n=60 nothing can be shown to add
+predictive value over anything else. Full numbers: `README.md`'s "LLM
+authority boundary" section and `python -m eval.run_extraction_comparison`
+(no API key needed — the LLM arm is a committed recording).
+
+The extraction is still reliable in format (zero repairs or fallbacks needed
+across the sample), and the structural argument for why it might struggle
+is unchanged and worth keeping as an explanation for a difference this
+evidence cannot establish: two of the seven typed fields sit near 1.0 for
+both classes because the generator's comms-log design makes the real signal
+a frequency tilt across near-synonymous phrasings, which a coarse yes/no
+LLM extraction collapses and a bag-of-words vectorizer preserves. This
+measurement is not, and was never, what justifies keeping the LLM's role
+narrow — that argument is architectural (the policy engine is a pure
+function of `p_win` and `amount`; the reason-code mapping is a lookup
+table; no LLM output does arithmetic on money) and stands on its own.
 
 ## The model
 

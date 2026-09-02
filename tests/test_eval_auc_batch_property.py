@@ -117,8 +117,10 @@ def test_batch_auc_agrees_with_sklearn_on_bootstrap_shaped_input(seed):
     keep = np.array([len(np.unique(row)) > 1 for row in y])
 
     assert np.allclose(
-        auc_batch(y[keep], scores[keep]), _reference(y[keep], scores[keep]),
-        atol=TOLERANCE, rtol=0,
+        auc_batch(y[keep], scores[keep]),
+        _reference(y[keep], scores[keep]),
+        atol=TOLERANCE,
+        rtol=0,
     )
 
 
@@ -201,9 +203,7 @@ def test_exact_ties_straddling_the_decision_boundary():
     # One positive clearly above the tied block, one inside it.
     y2 = np.array([[1, 1, 0, 0]])
     scores2 = np.array([[1.0, 0.5, 0.5, 0.5]])
-    assert np.allclose(
-        auc_batch(y2, scores2), _reference(y2, scores2), atol=TOLERANCE, rtol=0
-    )
+    assert np.allclose(auc_batch(y2, scores2), _reference(y2, scores2), atol=TOLERANCE, rtol=0)
 
 
 def test_a_reversed_perfect_ranking_is_exactly_zero():
@@ -221,6 +221,4 @@ def test_boolean_labels_are_accepted_like_integer_ones():
     y_int = y_bool.astype(int)
     scores = np.array([[0.9, 0.1, 0.8, 0.2]])
 
-    assert np.allclose(
-        auc_batch(y_bool, scores), auc_batch(y_int, scores), atol=TOLERANCE, rtol=0
-    )
+    assert np.allclose(auc_batch(y_bool, scores), auc_batch(y_int, scores), atol=TOLERANCE, rtol=0)

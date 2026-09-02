@@ -2698,3 +2698,370 @@ swept files; `git log --oneline -5` shows the two commits and everything between
 **Status:** RECORDED (2026-09-03).
 
 ---
+
+---
+
+## 2026-09-03 — Stale-number audit (Phase 2 addendum, item A)
+
+Systematic sweep: every numeric claim in `DECISIONS.md`, `README.md`,
+`ARCHITECTURE.md`, `GENERATOR.md`, and Python docstrings that predates the
+2026-09-01/02 validation work, re-run against current code. Triggered by the
+2026-09-02 oracle-test correction's claim that 0.4335 "no longer reproduces...
+the generator changed under it (GENERATOR.md revision 2)" - which turned out
+itself to be wrong, and is the first correction below.
+
+### Finding zero, load-bearing on everything after it: there was no revision-2 code transition
+
+**Old claim** (2026-09-02, the oracle golden-fixture entry): "0.4335 no longer
+reproduces. Running the current generator at seed 42 gives 0.4305 - the
+generator changed after that measurement (GENERATOR.md revision 2: the
+`amount` draw became weakly causal on `true_fraud`, and a noise feature was
+added), so the old figure describes a dataset this repository no longer
+produces."
+
+**New claim:** false. `git log --oneline -- disputedesk/generator/` shows
+exactly one commit that ever wrote this code (`960ced1`, "Phase 1: synthetic
+dispute generator per GENERATOR.md") and two later commits that touched it
+(`b5770a1`: a string rename with no numeric effect, verified below; `0ea4a4d`:
+this session's own leakage-guard assertions, which read already-computed
+columns and change nothing upstream of them). `GENERATOR.md`'s "revision 2"
+language - the weakly-causal `amount` draw, the `checkout_hour_of_day` noise
+feature, all of it - was already fully present in the generator code at
+`960ced1`, the very first commit. There was never a code transition for a
+later measurement to have been taken before.
+
+**Proof, not assertion:** checked out `960ced1` and `b5770a1` into separate
+worktrees and ran `generate_dataset(15000, seed=42, GeneratorConfig())` at
+each. Both produce `average_precision_score(y_true, p_true) =
+0.4304927827841146` - identical to HEAD, to the full float. The number this
+repository's generator has *always* produced at that seed is 0.4305, not
+0.4335, at every commit that has ever existed.
+
+**What this means for 0.4335:** it was never computed from any code this
+repository has committed. The entry that recorded it (2026-08-31, "Oracle
+closed-form vs. single-draw AP, reconciled") describes it as "a Phase 1
+sanity check" - consistent with an informal, uncommitted script run before
+the generator's final parameters were locked in, not a drift. This is a
+different and arguably worse failure mode than the one my earlier correction
+described: not "a number that was right and later went stale," but "a number
+that was never right and nothing was watching for it." Everything else in
+that same entry - the closed-form oracle value (0.4556, reproduces to
+0.45566...), the 500-replicate mean (0.4569, reproduces to 0.45685...), its
+std (0.0173) and standard error (0.0008) - reproduces exactly, which is what
+makes "the generator changed" an implausible explanation on its own terms: if
+it had, those would have moved too.
+
+**Correcting my own correction:** the 2026-09-02 entry's diagnosis was wrong
+and is itself corrected here, append-only, per this project's own rule for
+exactly this situation.
+
+### Every seed-pinned claim in GENERATOR.md reproduces exactly; the unseeded ones do not, and cannot be checked
+
+GENERATOR.md's revision notes cite several "out-of-band sanity check"
+measurements from the generator's design process, some pinned to
+`n=15,000, seed=42` and some to a larger `n` with no seed recorded:
+
+| claim (GENERATOR.md location) | recorded | today, same seed | delta | reproduces? |
+|---|---:|---:|---:|---|
+| `AUC(days_between_purchase_and_dispute, true_fraud)`, n=15,000, seed=42 (§1 L5) | 0.3504 | 0.350375 | 0.00002 | **yes, exact** |
+| same, n=300,000, seed unrecorded | 0.3507 | 0.3496–0.3527 across seeds 0,1,7,11,42 | up to 0.0011 | not checkable - no seed recorded |
+| `AUC(amount, true_fraud)`, n=15,000, seed=42 (§3) | 0.6082 | 0.608249 | 0.00005 | **yes, exact** |
+| same, n=200,000, seed unrecorded | 0.5998 | 0.5978 at seed=42 | 0.0020 | not checkable - no seed recorded |
+| `reason_code` misclassification rate, n=15,000, seed=42 (§1 L6) | 0.0971 | 0.097067 | 0.00003 | **yes, exact** |
+
+Every claim that names its seed reproduces to the fourth decimal place from
+current code. The two that do not name a seed sit close to, but not exactly
+on, the current value at every seed tried - consistent with genuine run-to-run
+sampling variance at those larger `n` (the θ-ratio derivation these sections
+document targets a *population* AUC; any single large-`n` draw lands near it,
+not on it), not with a code change, since the seed-42 companion measurement at
+the same design point reproduces exactly in every case. Recorded as a
+documentation gap (the seed for a large-`n` verification run should have been
+written down) rather than a contradiction - there is nothing to withdraw,
+because there is no committed way to check what seed those two numbers used.
+**Status:** DECIDED (gap noted, not fixed - would require re-deriving which
+seed, if any, produced each number, which is not recoverable from the repo).
+
+### Correction: `ARCHITECTURE.md` still asserted the withdrawn LLM-vs-TF-IDF claim
+
+**Old claim:** `ARCHITECTURE.md`'s LLM-boundary section, unedited since
+2026-09-01: "We measured whether the LLM adds predictive value, and it does
+not," citing AUC 0.4211 against "a TF-IDF + logistic-regression baseline's
+0.6371 on the same task."
+
+**New claim:** `README.md` was corrected on 2026-09-02 (the TF-IDF baseline
+entry) - `ARCHITECTURE.md` was not, and stood alongside it making the
+opposite claim to the one the README now makes. Fixed to match: the paired
+comparison (identical 60 items, identical CV folds) gives a difference of
++0.1624 with a 95% CI of −0.0648 to +0.3858, which includes zero. "The LLM
+does not add predictive value" is corrected to "at the sample size available,
+this cannot be shown either way," with a pointer to the README's fuller
+table. The LLM's narrow role is re-stated as resting on the architectural
+boundary (policy engine reads only `p_win`/`amount`; reason-code mapping is a
+lookup table; no LLM output does arithmetic), not on this measurement -
+stated explicitly so a reader does not need this number to trust that
+boundary.
+
+**Reproduce:** `python -m eval.run_extraction_comparison`. **Status:**
+DECIDED.
+
+### Correction: the LLM normalisation-quality run script would have reproduced its own defect
+
+**Old claim:** none stated as such, but `eval/run_llm_normalization_quality.py`
+- the script `README.md`'s own "what would settle it" note tells a future
+reader to run, to re-measure the LLM arm at a larger `n` once an API key is
+available - imported `TFIDF_BASELINE_AUC = 0.6371` from
+`eval.llm_normalization_quality` and printed `beats baseline: YES/NO` against
+it on every run.
+
+**New claim:** that is the exact large-sample-baseline-vs-small-sample-LLM-run
+comparison the 2026-09-02 TF-IDF correction fixed. Following this project's
+own README instruction to re-run this script would have silently reproduced
+the defect the correction exists to prevent. Fixed:
+`eval.llm_normalization_quality.TFIDF_BASELINE_AUC` is removed (grep confirms
+it had exactly two importers, both in this pair of files); the run script now
+computes the TF-IDF baseline fresh, on the same generator items and the same
+seed as the LLM arm it just collected, via a new
+`paired_comparison_against_tfidf` function, and reports the paired bootstrap
+comparison instead of a bare boolean. `paired_comparison_against_tfidf`
+refuses (raises) if the passed sample's `true_fraud` column does not match a
+fresh regeneration at the given `n_rows`/`seed` - the same pairing safeguard
+`eval/run_extraction_comparison.py` uses for the committed n=60 fixture,
+applied here to a fresh, not-yet-committed sample.
+
+**Reproduce:** `pytest tests/test_eval_run_llm_normalization_quality_comparison.py`
+(pure logic, no network - the live run itself needs `LLM_API_KEY`, unavailable
+in this environment). **Status:** DECIDED.
+
+### Correction: the human-review-cost sensitivity table used the pre-paired-estimator advantage
+
+**Old claim** (2026-09-02, "ESCALATE rate added to the cost sweep" entry):
+at the configured cost, crediting a human reviewer one additional
+`representment_cost_inr` per escalated-and-contested row overstates the
+reported advantage by 22,475/1,000 against a reported advantage of
+12,923/1,000 (174%), flipping the sign to roughly **−9,553**.
+
+**New claim:** the reported advantage in that table was
+`median(policy) − median(baseline_a)`, the unpaired estimator Phase 1
+corrected. Recomputed with the paired advantage (`data/eval/cost_sensitivity_median_iqr.csv`,
+20 seeds × 15,000 rows, this session):
+
+| cost | escalate rate (median) | overstatement (INR/1,000) | paired advantage (INR/1,000) | overstatement / advantage | advantage after adjustment |
+|---:|---:|---:|---:|---:|---:|
+| **400 (configured)** | 0.056189 | 22,475 | 11,210 | **200.5%** | **−11,265** |
+| 600 | 0.056189 | 33,713 | 42,923 | 78.5% | +9,209 |
+| 1,000 | 0.056189 | 56,189 | 162,600 | 34.6% | +106,412 |
+| 2,000 | 0.056189 | 112,377 | 685,587 | 16.4% | +573,209 |
+| 4,000 | 0.056189 | 224,754 | 2,180,044 | 10.3% | +1,955,289 |
+| 10,000 | 0.056189 | 561,886 | 7,555,900 | 7.4% | +6,994,014 |
+
+**The finding gets stronger, not weaker, under the corrected estimator.** The
+overstatement now exceeds the *entire* paired advantage by 200.5% (was
+174%), and the after-adjustment figure is more negative (−11,265 vs −9,553).
+The qualitative conclusion - this specific alternative pricing of escalation
+flips the sign of the headline comparison at the configured cost, and the
+effect fades fast as cost rises - is unchanged and, if anything, understated
+by the original table.
+
+**Superseded in spirit, not replaced:** this sensitivity (fixed extra cost
+per escalated row) and the Phase 1
+`eval.cost_sensitivity.break_even_human_review_cost_inr` (solve for the review
+cost that exactly cancels the advantage, ≈₹200 at the configured cost) ask
+related but different questions and both stand. Both point the same
+direction: the reported advantage is thin against any real human-review cost.
+
+**Reproduce:** the escalate-rate and advantage columns are in
+`data/eval/cost_sensitivity_median_iqr.csv` after
+`python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000`.
+**Status:** DECIDED.
+
+### Everything else checked reproduces exactly
+
+Full re-runs at 20 seeds × 15,000 rows, compared to 4 decimal places against
+their recorded values - all matched with no correction needed:
+
+- Phase 2 model quality (`python -m eval.run_harness --n-seeds 20 --n-rows 15000`):
+  model PR-AUC 0.3522, prevalence baseline 0.2377, oracle ceiling 0.4572,
+  calibration error 0.0270, precision/recall at threshold 0.3537/0.6954.
+- Phase 3 business metrics (`python -m eval.run_business_harness --n-seeds 20 --n-rows 15000`):
+  `zero`/`oracle`/`naive_contest` recovered totals (1,559,504 / 1,727,152 /
+  1,714,015), baseline A/B, FP/FN counts and costs, escalated share (0.0433).
+- Oracle closed-form and replicate-mean at seed 42: 0.4556 and 0.4569,
+  std 0.0173, SE 0.0008.
+- Every precision/recall/escalate-rate column in the 2026-09-01/09-02
+  cost-sweep entries (only the advantage column, corrected above, was wrong).
+
+### The mechanism: a generator fingerprint gate, always run
+
+`eval/generator_fingerprint.py` hashes `generate_dataset`'s full output - every
+value of every column of both frames, not a summary statistic - at one fixed
+small `(n_rows=2000, seed=0)`, and `tests/test_generator_fingerprint.py`
+asserts it against a committed constant on every `pytest` run (CI included, no
+flag to skip it). This is the mechanism item A asked for: a generator change -
+including one with no visible numeric effect, like the `VISA_83`→`VISA_10_4`
+rename, which the test suite pins as a case that must still move the hash -
+now fails a fast, always-on test by name, rather than surviving until someone
+happens to re-check a specific downstream figure. Existing exact-value golden
+fixtures (`tests/test_eval_oracle_replicate_check.py`,
+`tests/test_eval_cost_sweep_regression.py`,
+`tests/test_eval_extraction_comparison_regression.py`,
+`tests/test_eval_loss_tail.py`, `tests/test_eval_ablation.py`) are now tagged
+`GOLDEN FIXTURE` in a comment so a failure of the fingerprint test names
+exactly what else needs re-running and re-committing.
+
+Verified live: mutating `logit_intercept` from `-1.8` to `-1.80001` (a
+5th-decimal change to one config constant) fails
+`test_the_generator_fingerprint_matches_the_committed_value` immediately.
+
+**Reproduce:** `pytest tests/test_generator_fingerprint.py`. **Status:**
+DECIDED.
+
+---
+
+## 2026-09-03 — Single-feature ablation: how much of the advantage is one geo feature (Phase 2 addendum, item B)
+
+**Why this was run.** `eval/leakage.py`'s discrimination-ceiling guard, built
+in Phase 2, measures each feature's univariate AUC as a byproduct of checking
+none of them is a leak. `ip_geo_billing_distance_km` reaches 69.9% of the
+Bayes ceiling on its own - not a leak (98% is the flag threshold, and the
+shuffled-label control proves this isn't one), but strong enough on its own
+that, against a full-model advantage over "contest everything" of only ≈0.66%
+at the configured cost, the question "is the model mostly one feature"
+deserved a measured answer rather than a guess.
+
+**Method.** The exact same business harness, seeds, paired estimator, and
+cost sweep as Phase 1 (`eval.cost_sensitivity.summarize_sweep`), run three
+times with the model restricted to: the single strongest feature
+(`ip_geo_billing_distance_km`), the top three by the guard's own ranking
+(`+ prior_order_count, avs_match`), and the full twelve-feature set (unchanged
+from every other headline number). `eval/ablation.py`'s
+`predictions_for_feature_subset` fits its own `lgb.LGBMClassifier` directly
+rather than calling `disputedesk.model.train.train`, because that function
+hardcodes the categorical-feature list against the full declared set and
+would be asked for a column not present in a restricted `X_train`; production
+training code (`disputedesk/model/train.py`) is untouched.
+
+**Result**, seeds 0–19, n_rows=15,000 per seed, paired advantage over
+baseline A (mean of per-seed differences, 95% bootstrap CI, seeds positive):
+
+| cost (₹) | top-1 feature | top-3 features | full (12 features) | top-1 as % of full |
+|---:|---:|---:|---:|---:|
+| 0 | 0 | 0 | 0 | — |
+| 50 | −85 (−174 to −9), 9/20 | −96 (−221 to 12), 12/20 | **−131** (−284 to −6), 12/20 | not meaningful* |
+| 100 | −602 (−959 to −255), 6/20 | −629 (−991 to −278), 7/20 | **−257** (−563 to 53), 10/20 | not meaningful* |
+| 200 | −839 (−1,656 to −21), 8/20 | −1,500 (−2,610 to −431), 8/20 | **+1,040** (+289 to +1,787), 14/20 | not meaningful* |
+| 300 | +994 (−1,169 to +3,228), 11/20 | +1,116 (−416 to +2,568), 13/20 | **+4,184** (+2,673 to +5,717), 18/20 | 23.7% |
+| **400 (configured)** | **+7,377** (+4,643 to +9,736), 18/20 | **+7,717** (+4,153 to +10,912), 17/20 | **+11,210** (+8,508 to +13,633), 19/20 | **65.8%** |
+| 600 | +30,434 (+25,263 to +35,616), 20/20 | +34,957 (+29,210 to +40,047), 20/20 | +42,923 (+38,006 to +47,564), 20/20 | 70.9% |
+| 800 | +78,730 (+72,104 to +85,732), 20/20 | +84,820 (+76,592 to +92,403), 20/20 | +95,731 (+88,717 to +102,444), 20/20 | 82.2% |
+| 1,000 | +147,968 (+141,127 to +154,480), 20/20 | +157,738, 20/20 | +162,600 (+154,130 to +170,686), 20/20 | 91.0% |
+| 2,000 | +672,273, 20/20 | +679,652, 20/20 | +685,587, 20/20 | 98.1% |
+| 4,000 | +2,211,923, 20/20 | +2,203,442, 20/20 | +2,180,044, 20/20 | **101.5%** |
+| 6,000 | +3,970,096, 20/20 | +3,942,748, 20/20 | +3,904,450, 20/20 | 101.7% |
+| 10,000 | +7,698,799, 20/20 | +7,613,152, 20/20 | +7,555,900, 20/20 | 101.9% |
+
+\* below ≈₹300 the full-model advantage itself is not measurably different
+from zero (Phase 1's own finding), so a ratio against it is a ratio against a
+number close to zero and is not a meaningful percentage - reported as raw
+figures only in that region.
+
+**The finding, stated plainly: at the configured cost, one feature -
+`ip_geo_billing_distance_km` - alone captures roughly two-thirds (65.8%) of
+the model's entire measured advantage over "contest everything." Three
+features capture 68.8%.** The other nine features, combined, add nine more
+percentage points of advantage. This is not a criticism of the model - LightGBM
+finding and using the single strongest signal is exactly what it is supposed
+to do - but it is a materially different story than "a twelve-feature model
+learned a rich pattern," and a panel asking "what does the model actually
+learn" should be answered with this table, not a guess.
+
+**A second finding, more surprising and worth stating with equal plainness:
+above ≈₹2,000, the restricted models slightly *exceed* the full model's
+advantage** (101–102% at ₹4,000–10,000). The full twelve-feature model is not
+dominant at every cost point; at high cost, fewer features does marginally
+better on this metric. Not investigated further here - a plausible mechanism
+is that at a high breakeven `p_win` threshold, the extra features contribute
+noise as often as signal to the ranking of the few highest-confidence
+disputes that still clear the bar, but this is offered as a hypothesis, not a
+finding, and no code was changed in response to it (this session's own
+standing rule: report what comes out, do not chase a better number).
+
+**Golden fixture:** CI-scale exact values (8 seeds, 5,000 rows, cost=400 only)
+committed in `tests/test_eval_ablation.py`'s
+`COMMITTED_ABLATION_ADVANTAGE_AT_400`. At that reduced scale the three
+variants do **not** preserve the top1 ≤ top3 ≤ full ordering the headline
+table shows (top3's paired mean is actually negative there) - recorded as a
+finding about how noisy a 3–8-seed read of this comparison is, not
+suppressed. No ordering is asserted in the committed test for exactly this
+reason.
+
+**Reproduce:** `python -m eval.run_ablation --n-seeds 20 --n-rows 15000`.
+Writes `data/eval/ablation_{top1,top3,full}_median_iqr.csv` and matching
+per-seed CSVs. Unit/structural tests (feature-restriction is real, the "full"
+variant matches the unrestricted harness bit-for-bit, unknown feature names
+raise): `pytest tests/test_eval_ablation.py`.
+
+**Status:** CONFIRMED-RAN (2026-09-03).
+
+---
+
+## 2026-09-03 — A limit on the LLM extraction-comparison's eval design, not just its sample size (Phase 2 addendum, item C)
+
+**The gap.** `customer_communication_log` is excluded from the model's own
+feature set - deliberately, per `disputedesk/features/build.py`'s own
+docstring and CLAUDE.md's boundary rule - specifically *because* it is
+designed to carry `true_fraud` signal (GENERATOR.md §3), and that signal is
+instead measured openly by the LLM-vs-TF-IDF extraction comparison
+(`eval/extraction_comparison.py`, corrected 2026-09-02). What has not been
+stated plainly until now is what that comparison is actually extracting
+signal *from*.
+
+**The generator's comms-log signal is a 4×4×4 slot template, not open text.**
+`disputedesk/generator/comms.py`: every `true_fraud`-carrying message is
+assembled from exactly three content slots - `opening`, `claim`, `detail` -
+each drawn from a **fixed pool of four fixed strings**
+(`_OPENINGS`/`_CLAIMS`/`_DETAILS`), at `true_fraud`-conditioned sampling rates
+documented elsewhere as a "max ratio 1.5:1" (deliberately mild, per the
+session-2 fix for the exact-string-leak defect this design replaced). Tone
+(`_SIGNOFFS_POLITE`/`_SIGNOFFS_TERSE`), inclusion of the detail slot, near-empty
+messages, an irrelevant aside, and character-level typo/lowercase noise are
+all drawn from `relationship_genuineness` or pure noise, not `true_fraud` - so
+the entire `true_fraud` signal in every message lives in which 3 of 64
+possible (opening, claim, detail) combinations were drawn, tilted by a small
+weight difference.
+
+**Why this matters, stated as a limit and not a defect.** This was the
+correct design choice for what it was solving - the *previous* comms-log
+design used disjoint, class-exclusive template sets, which let a bag-of-words
+model recover `true_fraud` as a near-perfect string match, an unambiguous
+leak. The fix traded that leak for a narrower, harder, weight-tilted signal
+on purpose. But it means the extraction-comparison's paired result (difference
++0.1624, 95% CI −0.0648 to +0.3858, includes zero) is not a general claim
+about LLM-vs-TF-IDF extraction from free-form customer messages - it is a
+measurement of extracting a specific, deliberately subtle, closed-vocabulary
+signal from a 64-combination template, at n=60. **A real customer-service
+inbox has an unbounded vocabulary, genuine typos, code-switching, and
+context a 4×4×4 template cannot represent**, and nothing in this repository
+measures whether either extraction method's relative performance would
+transfer to that setting.
+
+**Two distinct limits, both real, neither substituting for the other:**
+
+1. **Sample size** (recorded 2026-09-02): n=60 is too small for either arm to
+   be distinguished from chance, let alone from each other.
+2. **Eval design** (this entry): even at a larger `n`, the comparison would
+   still be measuring extraction from a closed, synthetic, 64-combination
+   template - not from open text. Raising `n` (the "what would settle it"
+   note in `README.md`) addresses limit 1. It does not address limit 2,
+   because the template's ceiling on what signal exists to extract is fixed
+   regardless of how many draws from it are scored.
+
+**What this does not change:** the LLM's narrow architectural role (drafting
+text, never deciding, never doing arithmetic on money) does not rest on this
+comparison and is unaffected by either limit. Both limits belong in Phase 3's
+Limits section alongside the operating-point objection (0.75%→0.66% advantage,
+precision 0.2543 vs. 0.2377 no-skill floor) and the sample-size caveat, per
+this session's brief - carried here first so Phase 3 assembles rather than
+re-derives them.
+
+**Status:** DECIDED.

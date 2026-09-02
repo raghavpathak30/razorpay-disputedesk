@@ -160,9 +160,7 @@ def main(argv: list[str] | None = None) -> None:
             "precision": _fmt_median_iqr(summary, "precision"),
             "recall": _fmt_median_iqr(summary, "recall"),
             "escalate_rate": _fmt_median_iqr(summary, "escalate_rate"),
-            "paired_advantage_per_1000_inr": summary["advantage_paired_mean"].map(
-                "{:,.1f}".format
-            ),
+            "paired_advantage_per_1000_inr": summary["advantage_paired_mean"].map("{:,.1f}".format),
             "ci_95": (
                 summary["advantage_ci_low"].map("{:,.1f}".format)
                 + " to "

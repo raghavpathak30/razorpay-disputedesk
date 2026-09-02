@@ -327,8 +327,7 @@ def _ceiling_problems(
         f"(auc {auc:.4f} vs bayes {report.bayes_auc:.4f}) - no legitimate noisy "
         "reading of a latent can discriminate as well as the latent itself"
         for column, auc in report.univariate_auc.items()
-        if report.lift_fraction(column) >= ceiling_fraction
-        and abs(auc - 0.5) >= min_absolute_lift
+        if report.lift_fraction(column) >= ceiling_fraction and abs(auc - 0.5) >= min_absolute_lift
     ]
 
 

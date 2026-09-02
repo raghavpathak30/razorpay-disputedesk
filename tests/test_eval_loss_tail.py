@@ -92,7 +92,12 @@ def test_an_unswept_cost_raises_rather_than_returning_an_empty_summary():
 
 
 def test_the_measured_fifty_rupee_tail(tmp_path):
-    """Regression on the real sweep at CI scale. The headline 20-seed x
+    """GOLDEN FIXTURE - pinned against disputedesk.generator output, seeds
+    0-7, n_rows=5000. If eval/generator_fingerprint.py's committed fingerprint
+    ever changes, re-run and re-commit these values too (see that module's
+    docstring).
+
+    Regression on the real sweep at CI scale. The headline 20-seed x
     15,000-row figures are in DECISIONS.md; these are the same computation at
     a smaller, faster, frozen scale, committed so the shape cannot drift
     unnoticed.
@@ -127,6 +132,7 @@ def test_the_loss_to_gain_asymmetry_shrinks_as_cost_rises():
         fixed_seed_set(8), 5000, [50.0, 1000.0], GeneratorConfig(), ModelConfig()
     )
 
-    assert loss_tail(per_seed, 50.0).loss_to_gain_ratio > loss_tail(
-        per_seed, 1000.0
-    ).loss_to_gain_ratio
+    assert (
+        loss_tail(per_seed, 50.0).loss_to_gain_ratio
+        > loss_tail(per_seed, 1000.0).loss_to_gain_ratio
+    )

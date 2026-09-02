@@ -86,6 +86,9 @@ def test_closed_form_equals_the_mean_of_replicate_label_draws(replicate_study):
     )
 
 
+# GOLDEN FIXTURE - pinned against disputedesk.generator output at seed=42,
+# n_rows=15000. If eval/generator_fingerprint.py's committed fingerprint ever
+# changes, re-run and re-commit this value too (see that module's docstring).
 HISTORICAL_SEED_42_REALIZED_AP = 0.4304927827841146
 """The generator's own seed-42 holdout label draw, scored against its own `p`.
 

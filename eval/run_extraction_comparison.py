@@ -84,8 +84,9 @@ def main(argv: list[str] | None = None) -> None:
 
     paired = paired_auc_difference(labels, tfidf_oof, llm_oof, random_state=args.random_state)
 
-    print(f"items: n={len(labels)} (seed {LLM_ARM_SEED}), true_fraud prevalence "
-          f"{labels.mean():.4f}")
+    print(
+        f"items: n={len(labels)} (seed {LLM_ARM_SEED}), true_fraud prevalence {labels.mean():.4f}"
+    )
     print(f"LLM arm: {args.fixture} (recorded run, no live call)")
     print()
     print("PAIRED - identical items, identical CV folds:")
