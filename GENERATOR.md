@@ -112,8 +112,13 @@ Solved analytically rather than re-tuned by trial, using the identity that for
 mean_x/mean_y`. Solving for `P(Y > X) = 0.35` at `k=2` (shape unchanged) gives
 `ρ ≈ 1.51`. Verified by full-pipeline simulation including the measurement
 noise: `mean_true_fraud_days = 8.5`, `mean_genuine_days = 13.0` (ratio 1.529)
-→ empirical `AUC(days_between_purchase_and_dispute, true_fraud) = 0.3507` at
-n=300,000, and 0.3504 on the actual n=15,000, seed=42 dataset. The causal
+→ empirical `AUC(days_between_purchase_and_dispute, true_fraud) = 0.3496`
+at n=300,000, seed=42 (**corrected 2026-09-03**: the original 0.3507 for this
+n=300,000 check carried no recorded seed and could not be reproduced from any
+commit this repository has made — see `DECISIONS.md`'s 2026-09-03 "unseeded
+large-n claims" entry; this is a fresh run at the same n with the seed
+recorded, not a claim the original figure was ever wrong on its own terms),
+and 0.3504 on the actual n=15,000, seed=42 dataset. The causal
 story is unchanged — fraud victims still notice and report sooner than
 friendly-fraud disputers file — only the two means moved closer together, so
 `filing_delay_days` remains a genuine, medium-strength, *not* near-deterministic
@@ -268,8 +273,11 @@ lognormals. Solved analytically for the intended weak link rather than
 re-tuned by trial: for two lognormals sharing `σ`, `AUC = Φ(Δμ / (σ√2))`.
 Target `AUC = 0.60`: `z = Φ⁻¹(0.60) = 0.253347`, `Δμ = σ·√2·z = 0.9 × 1.414214
 × 0.253347 = 0.322458`. `μ_genuine` held at its original value; `μ_true_fraud
-= μ_genuine + Δμ`. Verified by simulation (n=200,000): empirical AUC = 0.5998;
-on the actual n=15,000, seed=42 dataset: AUC = 0.6082. `σ` is unchanged.
+= μ_genuine + Δμ`. Verified by simulation (n=200,000, seed=42): empirical
+AUC = 0.5978 (**corrected 2026-09-03**: the original 0.5998 carried no
+recorded seed and could not be reproduced — same correction and same
+`DECISIONS.md` entry as the n=300,000 figure above); on the actual n=15,000,
+seed=42 dataset: AUC = 0.6082. `σ` is unchanged.
 
 **Revision note (session 2): `avs_match`/`cvv_match`/`device_fingerprint_known`/
 `delivery_confirmed` mechanism fixed.** These were originally drawn as

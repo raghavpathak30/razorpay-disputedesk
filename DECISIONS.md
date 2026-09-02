@@ -3065,3 +3065,174 @@ this session's brief - carried here first so Phase 3 assembles rather than
 re-derives them.
 
 **Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Two unseeded large-n sanity-check AUCs, re-run with a recorded seed
+
+**Old claim** (GENERATOR.md §1 L5 and §3, both dated "session 2, out-of-band
+sanity check", never corrected until now): `AUC(days_between_purchase_and_dispute,
+true_fraud) = 0.3507` at n=300,000, and `AUC(amount, true_fraud) = 0.5998` at
+n=200,000. Neither cited a seed.
+
+**Found by:** the 2026-09-03 stale-number audit. Both claims' seed-42
+companion measurements at n=15,000 reproduce exactly (0.3504 and 0.6082); the
+two large-n figures do not hit exactly at any of five seeds tried (0, 1, 7,
+11, 42), landing within 0.001–0.002 of each — consistent with genuine
+run-to-run sampling variance at those scales, not a code change, but not
+reproducible as recorded either way.
+
+**New claim:** re-run at the same `n` with the seed pinned to 42, for
+consistency with every other seed-42 measurement in this document:
+
+| Claim | Old (unseeded) | New (n unchanged, seed=42) |
+|---|---:|---:|
+| `AUC(days_between_purchase_and_dispute, true_fraud)`, n=300,000 | 0.3507 | **0.3496** |
+| `AUC(amount, true_fraud)`, n=200,000 | 0.5998 | **0.5978** |
+
+Both deltas are within ordinary sampling noise for an AUC estimated at this
+`n` from a Beta-derived population target (the θ-ratio derivations these
+sections document target a population value; any single large-`n` draw lands
+near it, not on it) - this is not a claim the original figures were wrong on
+their own terms, only that they cannot be reproduced as recorded and are
+therefore replaced with a version that can be. `GENERATOR.md` updated in
+place at both citations, with this entry linked from each.
+
+**Reproduce:**
+
+    python -c "
+    from sklearn.metrics import roc_auc_score
+    from disputedesk.generator.config import GeneratorConfig
+    from disputedesk.generator.pipeline import generate_dataset
+    f, d = generate_dataset(300000, 42, GeneratorConfig())
+    print(roc_auc_score(d['true_fraud'], f['days_between_purchase_and_dispute']))
+    f2, d2 = generate_dataset(200000, 42, GeneratorConfig())
+    print(roc_auc_score(d2['true_fraud'], f2['amount']))
+    "
+
+**Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Phase 3 key run: blocked by the account's daily token budget, not by rate limiting
+
+**What was attempted.** Two live runs of `eval.run_grounding_draft
+--n-letters 250 --seed 0`, both against `openai/gpt-oss-20b` via Groq. Both
+failed on `429 Too Many Requests`. The first failure, at letter 167 of 250,
+turned out to be a real bug independent of the rate limit: the script held
+every row in memory and wrote its output CSV once, at the end of the loop, so
+the crash lost all 167 successful, budget-consuming calls with nothing
+persisted. Fixed (this entry's companion commits: `81f0e2a` incremental
+checkpointing and a related crash-on-long-corpus-text fix, `483999c` making
+the resumable loop testable with a stub client). The second run, relaunched
+with the fix and 2-second inter-letter pacing, failed again — immediately, on
+the very first letter's draft call.
+
+**The real cause, read from the 429 response body rather than assumed from
+the header:**
+
+    Rate limit reached for model `openai/gpt-oss-20b` in organization ...
+    on tokens per day (TPD): Limit 200000, Used 199763, Requested 491.
+    Please try again in 1m49.728s.
+
+This is **not** the per-minute or per-day *request*-count limit — that one
+(`x-ratelimit-limit-requests: 1000`) had 649 of 1,000 untouched throughout.
+It is the account's **daily token budget for this model, 200,000 TPD**,
+already at 99.9% by the time of the second crash. Pacing, retry counts, and
+checkpointing all address *rate*; none of them touch a *daily total* that is
+already spent. "Blocked until tomorrow" would still be the wrong takeaway,
+worked out below.
+
+**The arithmetic, so the actual constraint is legible rather than just
+"blocked":**
+
+- 167 letters completed successfully in the first run before the crash =
+  334 individual API calls (`normalize_communication_log` +
+  `draft_explanation_letter`, one each per letter).
+- Treating the day's ~200,000-token budget as consumed predominantly by that
+  run: **≈599 tokens per individual call** (200,000 ÷ 334), or **≈1,198
+  tokens per letter** counting both calls together — this session's own
+  incidental testing (a handful of probes and a 3-letter sanity check earlier
+  in the session) accounts for a small, single-digit-percent share of the
+  total and is folded into the same estimate rather than subtracted out, so
+  the true per-call figure is very slightly lower than stated.
+- A full n=250 measurement needs drafting (250 × 2 = 500 calls) plus grading.
+  Grading just the clean class (the false-flag rate specifically) is another
+  250 calls; the full three-class corpus is up to ~750. So the job needs
+  **750–1,250 calls total**.
+- At ≈599 tokens/call, that is **≈449,000–749,000 tokens** — against a
+  200,000 TPD ceiling, **2.25 to 3.75 days of budget, not one.**
+
+**The reservation, checked separately because it is the other lever a reader
+would reach for.** `GroqHttpLLMClient.MAX_COMPLETION_TOKENS = 1512`
+(`disputedesk/evidence/llm.py`) is sent as `max_completion_tokens` on every
+call, normalize and draft alike. Its derivation comment dates to the
+4,000-character letter ceiling Phase 0 replaced with the current 1,000-character
+one (`disputedesk/evidence/letter.py`'s `NETWORK_SUMMARY_MAX_CHARS`) — Phase 0
+left the constant unchanged, flagging it then as "over-provisions rather than
+under-provisions, which is the safe direction... a token-cost optimisation,
+not a correctness fix, and is not in this remediation's scope." Applying the
+same derivation method the constant already documents, to the ceiling as it
+actually stands today:
+
+    1000 chars / 3.6 measured chars-per-token ≈ 278 visible tokens
+    + ~100 tokens JSON scaffolding (unchanged - same schema shape)
+    + ~300 tokens reasoning margin (kept, for the same reason as the
+      original: a caller can raise reasoning_effort above this class's
+      "low" default without touching the constant)
+    278 + 100 + 300 = 678 tokens
+
+**678 versus 1512 reserved — about 2.2× over-provisioned** for what a
+1,000-character-capped letter can actually need.
+
+**Whether shrinking it would raise the daily call ceiling is genuinely
+uncertain, and stated as such rather than assumed.** The 429 bodies captured
+today show a `Requested` figure (491, then 612, on two calls that both sent
+`max_completion_tokens=1512`) that does not match 1512 at all — evidence that
+Groq's TPD accounting is not simply "reserve the full configured cap per
+call." If TPD is charged against *actual* generated tokens — consistent with
+this project's own previously-recorded live measurements of 349–581
+completion tokens per call at `reasoning_effort="low"`, both comfortably
+under even a 678 cap — then lowering `MAX_COMPLETION_TOKENS` mainly buys a
+tighter ceiling against a rare pathological long completion, not a higher
+sustainable calls-per-day rate, because real usage is already running well
+under a much smaller number than 1512. The true throughput driver would then
+be call count and prompt size, which the completion cap does not bound. No
+change was made to the constant — this is a report for a deliberate decision
+later, per this session's explicit instruction, not a fix.
+
+**Not done, and named rather than silently skipped:** 0.1 (grounding-gate
+false-flag rate) and 0.2 (raised-n LLM-vs-TF-IDF) did not run. See the
+"grounding gate: still not measured" and "extraction comparison: raised n not
+run" entries alongside this one for exactly what stands in the README in
+their place.
+
+**Multi-day resume, verified without spending any more of today's budget:**
+`draft_corpus` (`eval/run_grounding_draft.py`, refactored in `483999c`) is
+tested end-to-end against a `FakeLLMClient` calling it twice at the same
+checkpoint path — the second call resumes from exactly where the first left
+off, and a third call against a fully-done corpus makes zero client calls at
+all (an exploding stub proves it — see
+`tests/test_eval_run_grounding_draft.py`). The command sequence for a real
+multi-day run, once budget allows:
+
+    # Day 1 (and any following day): identical command, safe to interrupt or
+    # re-run any number of times - already-checkpointed positions are skipped.
+    python -m eval.run_grounding_draft --n-letters 250 --seed 0
+
+    # Once every position is drafted (check with):
+    python -c "from pathlib import Path; from eval.run_grounding_draft import already_drafted_positions; print(len(already_drafted_positions(Path('data/reference/grounding_letters_seed0.csv'))))"
+
+    # Then, in a session with budget remaining:
+    python -m eval.run_grounding_eval
+
+Also recorded in `NUMBERS.md` alongside the single-session command.
+
+**Reproduce the arithmetic above:** it is post-mortem reasoning over the
+crashed run's own printed progress and the 429 response bodies captured
+during today's session, not a re-runnable command — there is nothing to
+reproduce until budget resets, at which point the real measurement (not this
+estimate) supersedes it.
+
+**Status:** BLOCKED (external, account-level, resets on Groq's own daily
+cycle — not a defect in this codebase). Arithmetic: DECIDED.

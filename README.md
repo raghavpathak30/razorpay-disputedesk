@@ -11,13 +11,30 @@ exposure on network dispute-ratio programs) or accepts every one of them
 `open` dispute, scores the probability that contesting it would win, applies
 a deterministic expected-value policy to contest, accept, or escalate the
 case to a human, and — for the cases worth contesting — assembles the
-evidence packet the reason code requires (drafting the explanation letter
-and normalising the customer's free-text message), files it against
-Razorpay's Disputes API in test mode, and writes an append-only audit row
-explaining the decision end to end. Every number below is measured on a
-fully synthetic, documented dataset (see "What this dataset cannot tell
-you" below) — there is no real Razorpay merchant data anywhere in this
-project.
+required evidence packet (drafting the explanation letter, normalising the
+customer's free-text message, and grounding the letter against the dispute
+record before anything is allowed to leave the system), validates it against
+a schema, and writes an append-only audit row explaining the decision end to
+end.
+
+**What it does not do: file that evidence with Razorpay.** The `accept`
+call goes through — Razorpay's `accept` endpoint needs nothing beyond a
+dispute id, and the client calls it for real, in test mode. The `contest`
+call is built and sent the same way, but Razorpay's contest endpoint
+requires at least one document id attached as evidence when
+`action="submit"`, and this project has no document-upload pipeline — no
+code anywhere in this repository turns evidence into an uploaded file with
+an id. **A contest this system files today would very likely be rejected by
+the live API for that reason.** This is not a Limits-section footnote; it
+changes what the project *is*: an evidence-assembly, validation, and
+grounding pipeline that stops one step short of a working filer, not an
+end-to-end auto-contest system. See "What exists" below (the "Not built"
+paragraph) for the exact gap and `DECISIONS.md`'s 2026-09-02 "document id"
+entry for where it was found.
+
+Every number below is measured on a fully synthetic, documented dataset (see
+"What this dataset cannot tell you" below) — there is no real Razorpay
+merchant data anywhere in this project.
 
 Phases 0 through 4 (`PHASES.md`) are complete. The Phase 5 freeze declared
 on 2026-09-01 was reopened on 2026-09-02 to add one AI surface — the
@@ -139,14 +156,26 @@ weight and a coarse yes/no extraction collapses. But that is now an
 explanation offered for a difference **this evidence cannot establish**, not a
 finding.
 
-**What would settle it:** re-running the LLM arm at n ≈ 1,000, which the
-TF-IDF arm's own n=60-vs-n=3,000 spread suggests is roughly where this
-comparison becomes readable. That needs a live API key and roughly 1,000
-Groq calls; it was not run here (no `LLM_API_KEY` is configured in this
-environment). The command is
+**What would settle it, and what it would not.** Re-running the LLM arm at
+n ≈ 1,000, which the TF-IDF arm's own n=60-vs-n=3,000 spread suggests is
+roughly where this comparison becomes readable, needs a live API key and
+roughly 1,000 Groq calls. **A key run was attempted on 2026-09-03 and did
+not reach this measurement** — it was blocked earlier, drafting the
+grounding-gate corpus, by the account's daily token budget (200,000 TPD;
+full arithmetic in `DECISIONS.md`'s 2026-09-03 "key run: blocked" entry).
+The n=60 result above stands as the recorded finding; the command is
 `python -m eval.run_llm_normalization_quality --n-rows 1000 --seed 0`, and
 `eval/run_extraction_comparison.py` will pair against it once the recording
-is committed.
+is committed and budget allows.
+
+Raising n would settle only *this* limit — whether either arm carries
+measurable signal at a readable sample size. It would not touch a second,
+separate limit: the generator's `true_fraud` signal lives entirely in which
+3-of-64 combinations were drawn from a fixed three-slot, four-phrase-each
+template (`disputedesk/generator/comms.py`), tilted by a small
+class-conditioned weight. Any n scores extraction from that closed
+vocabulary, not from open customer text. No amount of re-running raises that
+ceiling — it is a limit on the eval's design, not its sample size.
 
 This measurement is *not* what justifies the LLM's narrow role in this
 system. That justification is architectural and stands on its own: the policy
@@ -191,12 +220,25 @@ them.
 
 ### It has not been measured, and nothing here claims otherwise
 
-**There is no gate performance number in this README, because the run needs a
-live API key and none is configured in this environment.** The corpus, the
-baseline, the interval estimators and the runner are all built and tested; the
-commands are in `DECISIONS.md`'s 2026-09-02 "NOT MEASURED" entry. Publishing a
-capability behind a point estimate is the failure the TF-IDF correction on this
-page is about, and it is not repeated here.
+**There is no gate performance number in this README.** A key run was
+attempted on 2026-09-03 and blocked — not by a missing key, but by the
+account's daily token budget (200,000 TPD for `openai/gpt-oss-20b`), which a
+crashed first attempt and its retries had already spent by the time a fixed
+second attempt was ready to run for real. The arithmetic is in `DECISIONS.md`'s
+2026-09-03 "key run: blocked" entry: a full n=250 measurement needs
+750–1,250 API calls, which is **2.25 to 3.75 days of this account's daily
+budget, not one** — so "try again tomorrow" is not the right takeaway either.
+The corpus, the baseline, the interval estimators and the runner are all
+built and tested, including a checkpoint-and-resume path added the same day
+so a future multi-day run cannot lose completed work to an interruption again
+(`eval/run_grounding_draft.py`, verified against a stub client with no live
+calls in `tests/test_eval_run_grounding_draft.py`). Publishing a capability
+behind a point estimate is the failure the TF-IDF correction on this page is
+about, and it is not repeated here: no corpus was ever drafted (both crashed
+runs failed before a single letter was checkpointed), so
+`eval.run_grounding_eval` has nothing to grade and refuses to run rather than
+report a placeholder — `budget_verdict()` is called on a real measured rate
+or not at all, never on an estimate standing in for one.
 
 ### What *is* measured is what the gate would cost
 
