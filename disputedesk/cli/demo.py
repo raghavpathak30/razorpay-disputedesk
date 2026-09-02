@@ -99,6 +99,28 @@ VALID_LETTER = json.dumps(
         "cites_evidence_types": ["billing_proof", "proof_of_service"],
     }
 )
+# The grounding gate's verdict (`disputedesk/evidence/grounding.py`), the third
+# LLM call on the contest path. Every assertion in the demo letter above traces
+# to a record field, so the gate passes it and the demo files as before. The
+# gate's own withhold path is not one of the demo's failure paths - it needs a
+# letter that asserts something the record does not support, which this fixed
+# fixture deliberately does not.
+VALID_GROUNDING = json.dumps(
+    {
+        "assertions": [
+            {
+                "quote": "Our authentication and fulfillment records support",
+                "supporting_field": "avs_match",
+                "verdict": "supported",
+            },
+            {
+                "quote": "this was a genuine, authorized transaction",
+                "supporting_field": "delivery_confirmed",
+                "verdict": "supported",
+            },
+        ]
+    }
+)
 
 CONTEST_WORTHY_EVENT = {
     "event": "dispute.created",
@@ -315,7 +337,7 @@ def demo_failure_path_llm_degrades(client: TestClient, engine) -> None:
     _print_audit_trail(engine, "disp_demo_llm_fallback")
 
     app.dependency_overrides[get_llm_client] = lambda: FakeLLMClient(
-        responses=[VALID_NORMALIZED, VALID_LETTER]
+        responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING]
     )
 
 
@@ -587,7 +609,7 @@ def _parse_args():
 
 
 def _wire_dependency_overrides(engine, model) -> tuple[FakeLLMClient, FakeRazorpayClient]:
-    fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
     fake_razorpay = FakeRazorpayClient()
 
     def _override_session():

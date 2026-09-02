@@ -35,6 +35,12 @@ VALID_NORMALIZED = json.dumps(
     }
 )
 VALID_LETTER = json.dumps({"letter_text": "y" * 80, "cites_evidence_types": ["billing_proof"]})
+# The grounding gate's verdict - the third LLM call on the contest path
+# (2026-09-02). Every assertion supported, so the gate passes the letter
+# through and these tests keep testing the HTTP layer rather than the gate.
+VALID_GROUNDING = json.dumps(
+    {"assertions": [{"quote": "yy", "supporting_field": "avs_match", "verdict": "supported"}]}
+)
 
 VALID_ENTITY = {
     "id": "disp_1",
@@ -84,7 +90,7 @@ def wired_app(monkeypatch):
     """
     engine = get_engine("sqlite:///:memory:")
     init_db(engine)
-    fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
     fake_razorpay = FakeRazorpayClient()
 
     def _session_override():

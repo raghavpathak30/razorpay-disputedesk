@@ -1,5 +1,11 @@
 """End-to-end evidence packet assembly (SPEC.md §1 step 4): the lookup table,
-the two LLM calls, and the combined human-review flag, wired together.
+the three LLM calls, and the combined human-review flag, wired together.
+
+The third call is the grounding gate (added 2026-09-02), which is why every
+fixture below queues a `VALID_GROUNDING` response after the letter. A packet
+whose letter drafts cleanly but whose gate cannot reach a verdict is withheld,
+not filed - `tests/test_evidence_grounding.py` pins that behaviour directly;
+here it only has to not surprise the assembler's own tests.
 """
 
 import json
@@ -35,17 +41,24 @@ VALID_LETTER_RESPONSE = json.dumps(
         "cites_evidence_types": ["billing_proof"],
     }
 )
+VALID_GROUNDING_RESPONSE = json.dumps(
+    {"assertions": [{"quote": "yy", "supporting_field": "avs_match", "verdict": "supported"}]}
+)
 
 
 def test_packet_uses_the_reason_code_lookup_not_an_llm_guess():
-    client = FakeLLMClient(responses=[VALID_NORMALIZED_RESPONSE, VALID_LETTER_RESPONSE])
+    client = FakeLLMClient(
+        responses=[VALID_NORMALIZED_RESPONSE, VALID_LETTER_RESPONSE, VALID_GROUNDING_RESPONSE]
+    )
     packet = assemble_evidence_packet(CONTEXT, "I don't recognize this charge.", client)
 
     assert packet.required_evidence_types == required_evidence_types(CONTEXT.reason_code)
 
 
 def test_packet_is_not_flagged_for_human_review_when_both_llm_calls_succeed():
-    client = FakeLLMClient(responses=[VALID_NORMALIZED_RESPONSE, VALID_LETTER_RESPONSE])
+    client = FakeLLMClient(
+        responses=[VALID_NORMALIZED_RESPONSE, VALID_LETTER_RESPONSE, VALID_GROUNDING_RESPONSE]
+    )
     packet = assemble_evidence_packet(CONTEXT, "I don't recognize this charge.", client)
 
     assert packet.human_review_required is False
@@ -57,7 +70,15 @@ def test_packet_is_flagged_for_human_review_when_normalization_falls_back():
     # Normalization gets two bad responses (fallback); letter drafting then
     # gets one bad, one good (repair succeeds) - the packet-level flag must
     # still be True because *one* of the two LLM jobs degraded.
-    client = FakeLLMClient(responses=["broken", "still broken", "not json", VALID_LETTER_RESPONSE])
+    client = FakeLLMClient(
+        responses=[
+            "broken",
+            "still broken",
+            "not json",
+            VALID_LETTER_RESPONSE,
+            VALID_GROUNDING_RESPONSE,
+        ]
+    )
     packet = assemble_evidence_packet(CONTEXT, "please refund", client)
 
     assert packet.human_review_required is True

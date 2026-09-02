@@ -2349,3 +2349,208 @@ construction of the cost model at that cost.
 (the "per-seed advantage distribution" block). Pinned at CI scale by
 `tests/test_eval_loss_tail.py`.
 **Status:** CONFIRMED-RAN (2026-09-02).
+## 2026-09-02 — Phase 5 freeze reopened for one AI surface, and re-frozen
+
+**Decision:** the Phase 5 freeze declared on 2026-09-01 is reopened to add the
+grounding gate (`disputedesk/evidence/grounding.py`), and only that. The README
+now reads "frozen except this surface, re-frozen on 2026-09-02" rather than
+withdrawing the freeze.
+
+**Why reopen at all.** The submission is judged on AI Judgment, and the
+system's LLM surface was two text-shaping jobs at the end of a deterministic
+pipeline. The gate is the one integration point where a model does something a
+deterministic function cannot: deciding whether a drafted letter asserts a fact
+the record has no field for. `docs/AI-SURFACE.md` records the three candidates
+considered, the four killed, and why this one ranked first on measurability and
+invariant risk rather than on judgment depth.
+
+**Why only this one.** The tail cost of reopening — the security review pass
+over a new LLM output on a submission path, the README's component table, and
+Phase 5's three cold runs — is paid once for one integration and roughly twice
+for two. `docs/AI-SURFACE.md` §2.2's narrative-consistency candidate was
+declined on model-authority grounds and stays declined; it is recorded in the
+README's "What we did not build" section rather than deferred silently.
+
+**What did not change.** The policy engine is untouched: `decide()` is still a
+pure function of `p_win` and `amount`, `disputedesk/policy/` still imports
+nothing from `disputedesk/evidence/`, and
+`tests/test_grounding_gate_pipeline.py::TestPolicyEngineCannotReachTheGate`
+asserts that as a property of the source rather than a convention.
+
+**Status:** DECIDED.
+
+---
+
+## 2026-09-02 — Grounding gate: a drafted letter must trace to the record before it can be filed
+
+**Decision:** the `explanation_letter` is graded against the seven-field
+dispute record before it can be submitted. A letter carrying an assertion the
+record contradicts, or an assertion the record has no field for, is withheld as
+`LetterProvenance.FAILED_GROUNDING` and queued for a person.
+
+**What the gate is for.** Schema validation checks shape and length; it cannot
+check whether a letter is *true*. Two failure classes, and only the second
+justifies a model:
+
+- **Contradiction** — the letter asserts something a record field denies.
+  Enumerable, and `eval/grounding_baseline.py` (a field-matcher) handles it.
+- **Unrecorded assertion** — the letter asserts a fact no field covers at all:
+  a tracking number, a signature, a phone call. A deterministic checker
+  validates the fields it enumerates; it cannot enumerate what the model
+  invented, because that set is neither finite nor known in advance.
+
+**Where it sits.** Furthest from the policy boundary of anything in
+`docs/AI-SURFACE.md`: it reads our own model's output against our own record,
+never the customer's narrative, never `p_win`. It runs inside
+`assemble_evidence_packet`, after the policy decision is made and persisted.
+
+**One-directional, and tested in both directions.** It can move a letter from
+`MODEL` to `FAILED_GROUNDING`. It cannot move one toward submission: a letter
+arriving non-`MODEL` is returned untouched with no LLM call spent, and no path
+in the module constructs a letter with `MODEL` provenance. The policy branch on
+the audit row is unchanged by a withhold — `policy_branch` still reads
+`contest`; what changed is that the packet was not fit to file, recorded
+separately as `validation_result="grounding_gate_withheld"`.
+
+**Fails closed, every mode tested.** Grader raises or times out; malformed JSON
+twice; schema violation; an invented field name; extra keys; an empty
+assertions list. All six land on `FAILED_GROUNDING`. The empty-list case is
+deliberate: an empty verdict means the grader found nothing to check, which is
+not evidence the letter is clean, and treating it as a pass would make "return
+nothing" the cheapest way to wave anything through.
+
+**Security.** The grader reads model output drafted from
+`customer_communication_log`, which is attacker-influenced. The letter is
+delimited and labelled as data in the prompt, and
+`tests/test_evidence_grounding_security.py` pins that a fully-complying grader
+still cannot produce a submittable letter: the injection's most direct ask
+(empty list, mark it grounded) is refused by the schema, a format hijack is
+unparseable and fails closed, and the gate has no mechanism to write back to
+the record. What is *not* claimed is that a live model resists the injection —
+that is measured, not asserted.
+
+**Measured:** not yet. See the two entries below.
+
+**Reproduce:** `pytest tests/test_evidence_grounding.py
+tests/test_evidence_grounding_security.py tests/test_grounding_gate_pipeline.py`
+(no API key, no network).
+**Status:** DECIDED (behaviour); measurement UNVERIFIED — see below.
+
+---
+
+## 2026-09-02 — Policy branch rates measured, and what the gate's false-flag rate costs
+
+**Result:** at `PolicyConfig` defaults (`representment_cost_inr=400.0`,
+`low_confidence_band=(0.45, 0.55)`), seeds 0–19, n_rows=15,000 per seed, on the
+temporal holdout:
+
+| branch | median | IQR |
+|---|---:|---|
+| CONTEST | **0.8052** | 0.7985–0.8186 |
+| ESCALATE | **0.0562** | 0.0485–0.0624 |
+| ACCEPT | 0.1363 | 0.1316–0.1407 |
+
+The ESCALATE figure reproduces the 5.62% already recorded in the 2026-09-02
+"Cost sweep assumptions" entry, which is the cross-check that says this
+measurement and that one describe the same run.
+
+**Why the CONTEST rate was needed.** The gate can only withhold letters that
+were going to be *filed*. An escalated dispute never reaches it (no evidence is
+assembled on that branch) and an accepted one has no letter. So the gate's
+false-flag rate applies to the CONTEST share, not to the whole population:
+
+    human_touched_rate = escalate_rate + contest_rate × gate_false_flag_rate
+
+**The finding, and it is bad news for the gate.** Feeding that into the
+break-even the cost sweep already computes (`eval/review_cost.py`):
+
+| gate false-flag rate | human-touched rate | break-even review cost (INR) |
+|---:|---:|---:|
+| 0.00 | 0.0562 | 200 |
+| 0.02 | 0.0723 | 155 |
+| 0.05 | 0.0965 | 116 |
+| 0.10 | 0.1367 | 82 |
+| 0.20 | 0.2172 | 52 |
+| 0.50 | 0.4588 | 24 |
+
+Read the other way — the more useful direction while the rate is unmeasured —
+**at the ₹150 of analyst time `disputedesk/policy/config.py` already budgets
+per contested dispute, the gate's false-flag rate must stay below 2.3% or it
+cancels the policy's entire measured advantage over baseline A.** At ₹100 a
+review the budget is 6.9%; at ₹200 the ESCALATE rate alone already exhausts it
+and there is no room at all.
+
+This is a tighter budget than the gate was proposed against, and it is the
+first thing a reader should know about it. It does not depend on the gate's
+measured performance — it is arithmetic over numbers already recorded — so it
+stands whether or not the API-key run ever happens.
+
+**Still an upper bound, for the same reason as before:** the letter-drafting
+component of the withheld rate remains unmeasured (its only empirical input was
+invalidated by the v1→v2 prompt and schema change), so it is excluded from the
+denominator, and a component excluded from the denominator can only make the
+true break-even lower.
+
+**Reproduce:** `pytest tests/test_eval_review_cost.py` pins the arithmetic and
+the ₹200 and 2.3% figures. The branch rates come from
+`eval.cost_sensitivity.run_seed_pipeline` + `decide_batch` over seeds 0–19 at
+n_rows=15000 — the same pipeline `python -m eval.run_cost_sensitivity
+--n-seeds 20 --n-rows 15000` runs.
+**Status:** CONFIRMED-RAN (2026-09-02, 20 seeds × 15,000 rows).
+
+---
+
+## 2026-09-02 — Grounding gate: NOT MEASURED, and why
+
+**Result: none. There is no gate performance number, and none is claimed.**
+
+The brief this was built to asked for a measured number with an interval rather
+than a recorded command, on the basis that a key run would happen first. No
+`LLM_API_KEY` is configured in this environment and no `.env` exists, so the
+gate arm could not be run. Recording an unmeasured capability behind a point
+estimate is exactly the failure the 2026-09-02 TF-IDF correction is about, so
+nothing is reported.
+
+**What was built and is reproducible without a key:**
+
+- the gate, its schema, and every failure mode (`pytest tests/test_evidence_grounding*.py`);
+- the deterministic baseline (`eval/grounding_baseline.py`);
+- the corpus construction and its composition table (`eval/grounding_corpus.py`);
+- the interval estimators — Wilson for rates, exact McNemar plus a paired
+  bootstrap for arm differences (`eval/grounding_stats.py`);
+- the cost-model consequence, in full (entry above).
+
+**One corpus fact that is measured, and caps the claim.** The baseline's
+shape-based detector catches **6 of the 12** Class B insertion templates:
+`signature`, `tracking`, `phone_call`, `email_open`, `date`, `ip_login`. It
+misses the other six — `loyalty`, `no_prior_disputes`, `order_contents`,
+`refund_offer`, `terms_accepted`, `warehouse` — which are plain declarative
+claims with no distinctive shape. So on this corpus the baseline's Class B
+ceiling is 50% by construction of the template set, and a gate scoring near 50%
+would be no better than regexes. A reader is entitled to say the six templates
+were chosen to be invisible to the baseline; the templates are committed
+verbatim and this split is published so that judgment is available to them
+rather than hidden. That is the ceiling on any claim built from this corpus.
+
+**The exact commands for the run, in order:**
+
+```
+python -m eval.run_grounding_draft --n-letters 120 --seed 0   # needs LLM_API_KEY
+python -m eval.run_grounding_eval --seed 0                     # needs LLM_API_KEY
+python -m eval.run_grounding_eval --baseline-only              # no key needed
+```
+
+The first commits `data/reference/grounding_letters_seed0.csv` so everything
+downstream reproduces without a key, as the TF-IDF correction required of the
+LLM arm.
+
+**n and power, decided before running:** 120 drafts yields ~120 clean, ~120
+Class B and up to 120 Class A items. At n=120 a Wilson interval on a false-flag
+rate near 0.05 is about 0.02–0.11 — readable, and narrow enough to place the
+rate against the 2.3% budget above. It is *not* narrow enough to distinguish
+2.3% from 5%, which is worth saying plainly: if the measured rate lands in that
+region, the honest report is that the gate's cost cannot be resolved at this n.
+
+**Status:** UNVERIFIED (not run — no API key in this environment).
+
+---

@@ -1,6 +1,28 @@
 # AI surface spike — candidate integration points
 
-**Status: design only. No implementation code has been written. Nothing here is built.**
+**Status: resolved 2026-09-02. §2.1 (the letter grounding gate) was approved and built;
+§2.2 and §2.3 were declined, and §3's candidates stay killed.**
+
+This document is kept as written — it is the record of what was considered and rejected, and
+the README's "What we did not build" section summarises it for the submission. What has
+changed since:
+
+- The gate is built (`disputedesk/evidence/grounding.py`), tested, and wired into packet
+  assembly. It is **not measured**: no `LLM_API_KEY` is configured here. See `DECISIONS.md`'s
+  2026-09-02 "NOT MEASURED" entry for the exact commands.
+- §2.1's eval design was corrected during implementation. Field-flipping generates only the
+  *contradiction* class, which a deterministic matcher handles — so the corpus now has two
+  positive classes reported separately, and the README's claim rests on Class B (unrecorded
+  assertion), not on the pooled number.
+- One thing this document did not anticipate: what the gate would **cost**. Its false-flag
+  rate feeds the cost sweep's human-review exclusion, and at the repo's own ₹150 analyst-time
+  figure the rate must stay below **2.3%** or it cancels the policy's entire measured
+  advantage. That is arithmetic over already-recorded numbers, and it is the tightest
+  constraint on the feature. See `DECISIONS.md`, 2026-09-02.
+- §0.3's freeze concern was resolved by reopening Phase 5 for this surface only and
+  re-freezing on 2026-09-02.
+
+The original document follows unchanged.
 
 Written 2026-09-02, against the repo at commit `03dd265`. This document proposes where a
 model could take on real judgment in this system, argues against the candidates that do not

@@ -86,13 +86,29 @@ number, not silently fixed.
 
 ## The LLM authority boundary
 
-Exactly two jobs, both text-in/text-out, both schema-validated before use,
-neither touching a decision:
+Exactly three jobs (two until 2026-09-02), all schema-validated before use,
+none touching a decision:
 
 - **Draft `explanation_letter`** from the dispute's order-context facts
   (`disputedesk/evidence/draft_letter.py`).
 - **Normalise `customer_communication_log`** free text into typed boolean/
   enum fields (`disputedesk/evidence/normalize_comms.py`).
+- **Grade the drafted letter against the dispute record**
+  (`disputedesk/evidence/grounding.py`), withholding it from submission if any
+  factual assertion cannot be traced to a record field. Added 2026-09-02 under
+  the `SPEC.md` §2 amendment of that date.
+
+The third is the only one that can change what happens to a dispute, so its
+authority is bounded twice over. It is **one-directional** — it can move a
+letter from submittable to `failed_grounding`, never the reverse, and no path
+in the module constructs a `MODEL`-provenance letter. And it is **downstream of
+the decision**: it runs inside `assemble_evidence_packet`, on the `CONTEST`
+branch only, after `policy/` has decided and the decision has been persisted.
+A withhold leaves `policy_branch` on the audit row reading `contest`; what it
+changes is `validation_result`, which is a separate column recording a separate
+fact. `tests/test_grounding_gate_pipeline.py` asserts both directions, and
+asserts as a property of the source that `disputedesk/policy/` imports nothing
+from `disputedesk/evidence/`.
 
 Forbidden, explicitly, per `DECISIONS.md`'s "LLM authority boundary" entry:
 deciding contest vs. accept (`policy/`'s job, always resolved before the

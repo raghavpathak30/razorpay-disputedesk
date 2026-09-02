@@ -24,7 +24,8 @@ from disputedesk.client.razorpay import RazorpayClient
 from disputedesk.evidence.assembler import assemble_evidence_packet
 from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.draft_letter import PROMPT_VERSION as _LETTER_PROMPT_VERSION
-from disputedesk.evidence.letter import DraftedLetter
+from disputedesk.evidence.grounding import PROMPT_VERSION as _GROUNDING_PROMPT_VERSION
+from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
 from disputedesk.evidence.llm import LLMClient
 from disputedesk.evidence.published_reason_codes import is_supported_reason_code
 from disputedesk.features.build import build_features
@@ -32,7 +33,9 @@ from disputedesk.model.predict import predict_proba
 from disputedesk.policy.config import PolicyConfig
 from disputedesk.policy.engine import Decision, PolicyDecision, decide
 
-_PROMPT_VERSIONS_FOR_CONTEST = f"normalize_comms_log_v1,{_LETTER_PROMPT_VERSION}"
+_PROMPT_VERSIONS_FOR_CONTEST = (
+    f"normalize_comms_log_v1,{_LETTER_PROMPT_VERSION},{_GROUNDING_PROMPT_VERSION}"
+)
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,23 @@ _UNRECOGNISED_REASON_CODE = _EvidenceOutcome(
 )
 
 
+def _validation_result_for(packet) -> str:
+    """What the audit row records about how the evidence packet turned out.
+
+    Three outcomes, kept distinct because they mean different things to the
+    person who picks the dispute out of the review queue: the letter was
+    drafted and grounded; the letter was drafted but the grounding gate
+    withheld it (`disputedesk/evidence/grounding.py`); or drafting itself
+    failed and the deterministic template stood in.
+    """
+    letter = packet.explanation_letter
+    if letter.provenance is LetterProvenance.FAILED_GROUNDING:
+        return "grounding_gate_withheld"
+    if packet.human_review_required:
+        return "fallback_template_used"
+    return "validated"
+
+
 def _assemble_evidence_if_contesting(
     entity: DisputeEntity, policy_decision: PolicyDecision, llm_client: LLMClient
 ) -> _EvidenceOutcome:
@@ -139,7 +159,7 @@ def _assemble_evidence_if_contesting(
     packet = assemble_evidence_packet(context, entity.customer_communication_log, llm_client)
     return _EvidenceOutcome(
         prompt_version=_PROMPT_VERSIONS_FOR_CONTEST,
-        validation_result="fallback_template_used" if packet.human_review_required else "validated",
+        validation_result=_validation_result_for(packet),
         human_review_required=packet.human_review_required,
         letter=packet.explanation_letter,
     )

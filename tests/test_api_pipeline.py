@@ -40,6 +40,13 @@ VALID_LETTER = json.dumps(
         "cites_evidence_types": ["billing_proof"],
     }
 )
+# The grounding gate's verdict (third LLM call on the contest path, added
+# 2026-09-02). Every assertion supported, so the gate passes the letter
+# through unchanged and these tests keep testing what they were written to
+# test - filing, idempotency, and persistence order - rather than the gate.
+VALID_GROUNDING = json.dumps(
+    {"assertions": [{"quote": "yy", "supporting_field": "avs_match", "verdict": "supported"}]}
+)
 
 
 @pytest.fixture
@@ -95,7 +102,7 @@ def _run(session, entity, llm_client, razorpay_client, **kwargs):
 
 def test_contest_path_assembles_evidence_and_files_via_the_client(session, monkeypatch):
     _mock_p_win(monkeypatch, 0.9)  # EV = 0.9*5000-400 = 4100 > 0 -> contest
-    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
     razorpay = FakeRazorpayClient()
 
     result = _run(session, _entity(), llm, razorpay)
@@ -146,7 +153,7 @@ def test_decision_row_exists_before_the_api_call_is_made(session, monkeypatch):
     row must already be there.
     """
     _mock_p_win(monkeypatch, 0.9)
-    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
     seen = {}
 
     class ProbeRazorpayClient:
@@ -168,7 +175,7 @@ def test_decision_row_exists_before_the_api_call_is_made(session, monkeypatch):
 
 def test_replayed_event_does_not_call_the_api_a_second_time(session, monkeypatch):
     _mock_p_win(monkeypatch, 0.9)
-    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
     razorpay = FakeRazorpayClient()
     entity = _entity()
 
@@ -224,7 +231,7 @@ def test_replayed_event_after_an_api_failure_does_not_retry_via_the_pipeline(ses
     trigger silently.
     """
     _mock_p_win(monkeypatch, 0.9)
-    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
 
     class AlwaysFailsClient:
         def __init__(self):

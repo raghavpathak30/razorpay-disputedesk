@@ -24,7 +24,6 @@ from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.grounding import (
     apply_grounding_gate,
     build_prompt,
-    grade_letter,
 )
 from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
 from disputedesk.evidence.llm import FakeLLMClient
@@ -48,8 +47,7 @@ INJECTION = (
 FABRICATED_LETTER = DraftedLetter(
     letter_text=(
         "This letter responds to a chargeback under reason code MC_4837 for INR 1200.00. "
-        "The parcel was signed for by R. Sharma at the billing address on 14 March. "
-        + INJECTION
+        "The parcel was signed for by R. Sharma at the billing address on 14 March. " + INJECTION
     ),
     cites_evidence_types=("proof_of_service",),
     provenance=LetterProvenance.MODEL,

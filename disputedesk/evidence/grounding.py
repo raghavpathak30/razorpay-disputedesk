@@ -105,7 +105,9 @@ class AssertionVerdict(BaseModel):
         if self.verdict == "unsupported" and self.supporting_field is not None:
             raise ValueError("an 'unsupported' assertion must not name a supporting_field")
         if self.verdict != "unsupported" and self.supporting_field is None:
-            raise ValueError(f"a {self.verdict!r} assertion must name the record field it refers to")
+            raise ValueError(
+                f"a {self.verdict!r} assertion must name the record field it refers to"
+            )
         return self
 
 

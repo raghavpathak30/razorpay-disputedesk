@@ -205,9 +205,7 @@ class TestRecordFields:
 class TestVerdictSchema:
     def test_supporting_field_must_be_a_real_record_field(self):
         with pytest.raises(ValidationError):
-            AssertionVerdict(
-                quote="x", supporting_field="not_a_field", verdict="supported"
-            )
+            AssertionVerdict(quote="x", supporting_field="not_a_field", verdict="supported")
 
     def test_every_record_field_is_accepted(self):
         for field in RECORD_FIELDS:
@@ -219,14 +217,10 @@ class TestVerdictSchema:
 
     def test_an_unsupported_verdict_must_not_name_a_field(self):
         with pytest.raises(ValidationError):
-            AssertionVerdict(
-                quote="x", supporting_field="avs_match", verdict="unsupported"
-            )
+            AssertionVerdict(quote="x", supporting_field="avs_match", verdict="unsupported")
 
     def test_grounded_is_true_only_when_every_assertion_is_supported(self):
-        supported = AssertionVerdict(
-            quote="x", supporting_field="avs_match", verdict="supported"
-        )
+        supported = AssertionVerdict(quote="x", supporting_field="avs_match", verdict="supported")
         contradicted = AssertionVerdict(
             quote="y", supporting_field="cvv_match", verdict="contradicted"
         )

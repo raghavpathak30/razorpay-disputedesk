@@ -19,8 +19,11 @@ fully synthetic, documented dataset (see "What this dataset cannot tell
 you" below) — there is no real Razorpay merchant data anywhere in this
 project.
 
-Phases 0 through 4 (`PHASES.md`) are complete and frozen as of this
-document. Nothing described here is a stub unless explicitly labelled one.
+Phases 0 through 4 (`PHASES.md`) are complete. The Phase 5 freeze declared
+on 2026-09-01 was reopened on 2026-09-02 to add one AI surface — the
+grounding gate — and **re-frozen on 2026-09-02**. `DECISIONS.md` records why
+the freeze was reopened and why for that surface only. Nothing described here
+is a stub unless explicitly labelled one.
 
 ## What exists
 
@@ -31,11 +34,13 @@ document. Nothing described here is a stub unless explicitly labelled one.
 | Win-probability model (LightGBM) | Built | `disputedesk/model/` |
 | Policy engine | Built | `disputedesk/policy/` |
 | Evidence assembler (reason-code map + LLM drafting/normalisation) | Built | `disputedesk/evidence/` |
+| Grounding gate (letter → record, fails closed to review) | Built, **unmeasured** | `disputedesk/evidence/grounding.py` |
 | Razorpay Disputes API client (test mode) | Built | `disputedesk/client/` |
 | Append-only audit log (DB triggers + hash chain) | Built | `disputedesk/audit/` |
 | FastAPI webhook | Built | `disputedesk/api/` |
 | Demo CLI | Built | `disputedesk/cli/demo.py` |
 | Eval harness (model, business, cost-sensitivity, oracle) | Built | `eval/` |
+| Grounding-gate eval (corpus, baseline, intervals) | Built, **not yet run** | `eval/grounding_*.py` |
 
 **Not built, stated plainly rather than left for a reviewer to discover:**
 a document-upload pipeline (the real Razorpay `contest()` call submits the
@@ -55,13 +60,18 @@ internet without adding that check first).
 
 ## The LLM authority boundary
 
-The LLM is allowed exactly two jobs (`SPEC.md` §2, `DECISIONS.md`'s
-"LLM authority boundary" entry):
+The LLM is allowed exactly three jobs (`SPEC.md` §2, amended 2026-09-02;
+`DECISIONS.md`'s "LLM authority boundary" entry):
 
 - Drafting the `explanation_letter` evidence object from the dispute's
   order-context facts (`disputedesk/evidence/draft_letter.py`).
 - Normalising the customer's free-text `customer_communication_log` into
   typed fields (`disputedesk/evidence/normalize_comms.py`).
+- Grading a drafted letter against the dispute record and withholding it if
+  any assertion cannot be traced to a record field
+  (`disputedesk/evidence/grounding.py` — see "The grounding gate" below).
+  This was two jobs until 2026-09-02; `SPEC.md` §2 carries the amendment and
+  the argument for why the third one does not approach the decision.
 
 It is explicitly forbidden from:
 
@@ -143,6 +153,152 @@ system. That justification is architectural and stands on its own: the policy
 engine is a pure function of `P(win)` and `amount`, the reason-code mapping is
 a published lookup table, and no LLM output does arithmetic on money
 (`SPEC.md` §2). Nothing in the table above is load-bearing for that.
+
+## The grounding gate
+
+A drafted letter cannot be filed until every factual assertion in it has been
+traced back to a field of the dispute record. A letter that asserts what the
+record denies, or asserts something the record has no field for, is withheld
+for human review rather than submitted
+(`disputedesk/evidence/grounding.py`).
+
+**This is the one place in the system where a model does something a
+deterministic function cannot**, and the argument is narrower than it first
+looks. Two failure classes:
+
+- **Contradiction** — the letter says delivery was confirmed and the record
+  says it was not. Enumerable, and a field-matcher handles it. We committed
+  that field-matcher as the baseline (`eval/grounding_baseline.py`) rather
+  than describing it.
+- **Unrecorded assertion** — the letter says the parcel was signed for by
+  R. Sharma, and the record has no signature field, no name field, and no
+  delivery-event field. A deterministic checker validates the fields it
+  enumerates; it cannot enumerate what the model invented, because that set
+  is neither finite nor known in advance.
+
+The gate is **one-directional**: it can move a letter from submittable to
+`failed_grounding`, never the reverse. It never sees `P(win)`, never sees the
+policy branch, and produces nothing `policy/` has an input slot for. A
+withheld letter leaves the policy branch on the audit row unchanged — the row
+still reads `contest`, and what changed is that the packet was not fit to
+file, recorded separately as `grounding_gate_withheld`.
+
+It **fails closed**. A grader that raises, times out, returns malformed JSON
+twice, violates the schema, invents a field name, or returns an empty
+assertion list all withhold the letter. The only way to stay submittable is
+for the grader to affirmatively find factual claims and support every one of
+them.
+
+### It has not been measured, and nothing here claims otherwise
+
+**There is no gate performance number in this README, because the run needs a
+live API key and none is configured in this environment.** The corpus, the
+baseline, the interval estimators and the runner are all built and tested; the
+commands are in `DECISIONS.md`'s 2026-09-02 "NOT MEASURED" entry. Publishing a
+capability behind a point estimate is the failure the TF-IDF correction on this
+page is about, and it is not repeated here.
+
+### What *is* measured is what the gate would cost
+
+The gate can only withhold letters that were going to be filed, so its
+false-flag rate on clean letters applies to the CONTEST share of disputes, not
+to all of them:
+
+    human_touched_rate = escalate_rate + contest_rate x gate_false_flag_rate
+
+At `PolicyConfig` defaults over seeds 0–19 at 15,000 rows each, the policy
+contests **80.5%** of holdout disputes (IQR 79.9–81.9%) and escalates **5.6%**.
+Feeding that into the break-even the cost sweep already computes:
+
+| gate false-flag rate | human-touched rate | break-even review cost (INR) |
+|---:|---:|---:|
+| 0.00 | 0.0562 | 200 |
+| 0.02 | 0.0723 | 155 |
+| 0.05 | 0.0965 | 116 |
+| 0.10 | 0.1367 | 82 |
+| 0.20 | 0.2172 | 52 |
+
+**Read the other way: at the ₹150 of analyst time `policy/config.py` already
+budgets per contested dispute, the gate's false-flag rate has to stay below
+2.3% or it cancels the policy's entire measured advantage over baseline A.**
+At ₹100 per review the budget is 6.9%. At ₹200 the escalate rate alone already
+exhausts it.
+
+That is a tighter budget than the gate was designed against, it does not
+depend on the gate's unmeasured performance — it is arithmetic over numbers
+already recorded — and it is the first thing a reader should know about this
+feature. It is also still an *upper* bound: the letter-drafting component of
+the withheld rate remains unmeasured and is excluded from the denominator,
+which can only make the true break-even lower.
+
+Reproduce: `pytest tests/test_eval_review_cost.py`.
+
+### What the corpus can and cannot support
+
+The evaluation corpus (`eval/grounding_corpus.py`) has three classes. Class A
+contradictions are generated by flipping a recorded boolean *after* the letter
+was drafted, so the ground truth is mechanical. Class B insertions are twelve
+committed templates, and their difficulty is a choice we made.
+
+The baseline's shape-based detector catches **6 of the 12** Class B templates
+(`signature`, `tracking`, `phone_call`, `email_open`, `date`, `ip_login`) and
+misses the other six (`loyalty`, `no_prior_disputes`, `order_contents`,
+`refund_offer`, `terms_accepted`, `warehouse`), which are plain declarative
+claims with no distinctive shape. So on this corpus the baseline's Class B
+ceiling is 50% by construction, and a gate scoring near 50% would be no better
+than regexes.
+
+The templates, the baseline's patterns and the gate's prompt were authored by
+the same person in the same session. A reader cannot verify the templates were
+not chosen to be invisible to the baseline. They are committed verbatim and
+the split above is published so that judgment is available rather than hidden.
+That is the ceiling on any claim built from this corpus, and running the
+comparison harder does not raise it.
+
+## What we did not build, and why
+
+Four AI integration points were considered and rejected. They are listed here
+rather than kept as internal notes, because what a system declines to hand a
+model is part of its design. The full analysis is in `docs/AI-SURFACE.md`.
+
+- **Contest strategy selection** — killed on measurability. There is no ground
+  truth for "was this the right argument": `won_if_contested` is sampled from
+  causal latents (`GENERATOR.md`) and argument choice is not among them, so the
+  label is constructed to be independent of anything a strategy selector could
+  do. No amount of further work makes it scoreable, and adding argument quality
+  to the generator would mean inventing the effect we then "measured".
+
+- **Reason-code classification for unrecognised codes** — killed against the
+  "must never guess" rule. Mapping an unsupported code onto the nearest
+  supported one is `SPEC.md` §2's named disqualifier in a different hat; the
+  `VISA_83 → VISA_10_4` entry is documented supersession, not a guess. An
+  unrecognised code is queued for a person, which is the correct answer.
+
+- **Narrative/transaction consistency checking** — declined on model-authority
+  grounds, and this was the closest call. Reading the customer's account
+  against the transaction record is the most literal reading of "AI Risk
+  Manager", and it is judgment a function cannot do. But it makes the model's
+  verdict about *the customer* change what gets filed, and it would require
+  rewriting the line in `evidence/schemas.py` that says the normalised comms
+  fields "must never be treated as a fraud signal". The grounding gate is
+  one-directional over *our own output*; this would be one-directional over a
+  judgment about a person. That is a larger escalation than this submission
+  should carry.
+
+- **Evidence sufficiency assessment** — declined on cost and circularity. It is
+  the deepest judgment of the four, but this project has one unstructured
+  artifact per dispute (a templated communication log), and the 71 published
+  reason codes in `data/reference/` carry no per-code evidence checklist —
+  card networks publish those separately and none was fetched. Building it
+  would mean first building an artifact generator, then grading the model on
+  recovering a template we wrote, against a ceiling we set.
+
+- **LLM screening of prompt-injection in customer free text** — killed as the
+  weak answer to a real concern. The comms log is attacker-influenced and does
+  reach two prompts. The strong answers are architectural and already present:
+  schema-constrained output, no tool access, no path to `policy/`, and a letter
+  that cannot be filed without passing `require_submittable`. A model gate here
+  would have obscured that.
 
 ## Headline numbers
 

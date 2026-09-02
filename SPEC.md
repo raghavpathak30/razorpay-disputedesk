@@ -42,6 +42,26 @@ Only two places:
 - Drafting the `explanation_letter` from unstructured customer-communication logs.
 - Normalising messy free-text order context into typed evidence fields.
 
+**Amended 2026-09-02 — a third place, and the test it had to pass.** The two
+above stand unchanged. Added:
+
+- Grading a drafted `explanation_letter` against the dispute record, and
+  withholding it from submission if any assertion in it cannot be traced to a
+  record field (`disputedesk/evidence/grounding.py`).
+
+The original two-place limit was written to keep the LLM away from the
+*decision*. This addition does not approach it: the gate reads this system's
+own model output against this system's own record, after the policy engine has
+already decided and its decision has been persisted. It is one-directional — it
+can withhold a letter, never cause one to be filed — and it produces no value
+`policy/` has an input slot for. It earned the exception by being the one
+candidate where a deterministic function provably cannot do the job: it can
+check the fields it enumerates, but it cannot enumerate what a model invented.
+
+Four other candidates were considered against this same bar and rejected; see
+`docs/AI-SURFACE.md` and the README's "What we did not build" section. The
+forbidden list below is unchanged and still binding.
+
 ### Where the LLM is forbidden
 
 - Reason code to required-evidence mapping. That is a lookup table. Card networks
