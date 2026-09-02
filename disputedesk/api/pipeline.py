@@ -26,6 +26,7 @@ from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.draft_letter import PROMPT_VERSION as _LETTER_PROMPT_VERSION
 from disputedesk.evidence.letter import DraftedLetter
 from disputedesk.evidence.llm import LLMClient
+from disputedesk.evidence.published_reason_codes import is_supported_reason_code
 from disputedesk.features.build import build_features
 from disputedesk.model.predict import predict_proba
 from disputedesk.policy.config import PolicyConfig
@@ -110,10 +111,27 @@ _NO_EVIDENCE = _EvidenceOutcome(
     letter=None,
 )
 
+# The documented fallback for a reason code this system has no evidence
+# strategy for (2026-09-02, defect 0.3): the event is accepted, a full audit
+# row is written with this tag on it, and the dispute is queued for a person.
+# Nothing is filed in either direction - see `_file_if_needed`.
+_UNRECOGNISED_REASON_CODE = _EvidenceOutcome(
+    prompt_version=None,
+    validation_result="reason_code_unrecognised",
+    human_review_required=True,
+    letter=None,
+)
+
 
 def _assemble_evidence_if_contesting(
     entity: DisputeEntity, policy_decision: PolicyDecision, llm_client: LLMClient
 ) -> _EvidenceOutcome:
+    if not is_supported_reason_code(entity.reason_code):
+        # Checked before the branch test, not after: an unrecognised code
+        # stops the dispute regardless of what the policy engine decided,
+        # including an ACCEPT, because accepting is irreversible and this
+        # system does not know what it is accepting.
+        return _UNRECOGNISED_REASON_CODE
     if policy_decision.decision != Decision.CONTEST:
         return _NO_EVIDENCE
 
@@ -192,7 +210,7 @@ def process_dispute_event(
         return _already_processed_result(session, decision_row)
 
     api_outcome = _file_if_needed(
-        session, razorpay_client, dispute_id, policy_decision, entity.amount, evidence.letter
+        session, razorpay_client, dispute_id, policy_decision, entity.amount, evidence
     )
 
     return ProcessResult(
@@ -210,43 +228,59 @@ def _file_if_needed(
     dispute_id: str,
     policy_decision: PolicyDecision,
     amount_inr: float,
-    letter: DraftedLetter | None,
+    evidence: _EvidenceOutcome,
 ) -> ApiOutcome | None:
-    if policy_decision.decision == Decision.CONTEST:
+    action = _ACTION_BY_BRANCH.get(policy_decision.decision)
+    if action is None:
+        return None  # ESCALATE: no API call - a human decides. Nothing to file yet.
+
+    if evidence.validation_result == "reason_code_unrecognised":
+        return _withhold_for_review(
+            session,
+            dispute_id,
+            action,
+            "reason code is not one this system has an evidence strategy for",
+        )
+
+    if action == "contest":
+        letter = evidence.letter
         if letter is None or not letter.submittable:
-            return _withhold_for_review(session, dispute_id, letter)
+            provenance = letter.provenance.value if letter is not None else "missing"
+            return _withhold_for_review(
+                session,
+                dispute_id,
+                action,
+                f"explanation letter provenance is {provenance!r}, not 'model'",
+            )
         return _file(session, razorpay_client, dispute_id, "contest", amount_inr, letter)
-    if policy_decision.decision == Decision.ACCEPT:
-        return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None)
-    return None  # ESCALATE: no API call - a human decides. Nothing to file yet.
+
+    return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None)
 
 
-def _withhold_for_review(
-    session: Session, dispute_id: str, letter: DraftedLetter | None
-) -> ApiOutcome:
-    """The policy engine said contest, but the letter is not the model's own
-    validated output - a deterministic fallback, or text that had to be
-    shortened. Nothing is filed and no network call is made; the dispute is
-    recorded as awaiting a person (defect 0.1).
+_ACTION_BY_BRANCH = {Decision.CONTEST: "contest", Decision.ACCEPT: "accept"}
+
+
+def _withhold_for_review(session: Session, dispute_id: str, action: str, reason: str) -> ApiOutcome:
+    """The policy engine reached a decision, but the packet is not fit to act
+    on unsupervised - the letter is not the model's own validated output
+    (defect 0.1), or the reason code is one this system has no strategy for
+    (defect 0.3). Nothing is filed and no network call is made; the dispute is
+    recorded as awaiting a person.
 
     Deliberately *not* re-decided as accept: accepting is irreversible
-    (Razorpay's accept endpoint moves the dispute straight to "lost"), and a
-    letter-drafting failure is no evidence at all about whether this dispute
-    is winnable. The policy branch on the decision row still reads "contest",
-    because that is what the policy engine decided - what changed is that the
-    evidence packet was not fit to file, which is a separate fact and is
-    recorded as one.
+    (Razorpay's accept endpoint moves the dispute straight to "lost"), and
+    neither a drafting failure nor an unknown reason code is evidence about
+    whether this dispute is winnable. The policy branch on the decision row
+    still reads what the policy engine decided - what changed is that the
+    packet was not fit to file, which is a separate fact and is recorded as
+    one. `action` records which filing was withheld.
     """
-    provenance = letter.provenance.value if letter is not None else "missing"
     return record_api_outcome(
         session,
         dispute_id=dispute_id,
-        action="contest",
+        action=action,
         outcome="withheld_for_review",
-        error=(
-            f"explanation letter provenance is {provenance!r}, not 'model'; "
-            "queued for human review instead of being submitted"
-        ),
+        error=f"{reason}; queued for human review instead of being filed",
     )
 
 

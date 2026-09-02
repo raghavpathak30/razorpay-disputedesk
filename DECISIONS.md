@@ -1637,3 +1637,82 @@ document-upload pipeline" bullet is updated to say this outright.
 
 **Status:** UNVERIFIED — not tested against the live API (no key configured in
 this environment). Sourced from Razorpay's documentation only.
+
+---
+
+## 2026-09-02 — CORRECTION: the webhook 422'd reason codes Razorpay itself publishes
+
+**Old claim:** `disputedesk/api/schemas.py` constrained `reason_code` to
+`Literal[*REASON_CODES]` — the four codes with an evidence strategy — with the
+comment "which would otherwise surface as an unhandled 500 for a
+`contest`-bound dispute instead of a 422 rejected here, at the boundary, per
+this phase's 'validate every field, not just status' review".
+`tests/test_api_schemas.py::test_unrecognized_reason_code_is_rejected` asserted
+it. The 2026-09-01 "Visa reason code rename" entry and its commit message
+(`b5770a1`, "VISA_83 -> VISA_10_4 with legacy wire alias") described a legacy
+wire alias; **no such alias was ever implemented** — `grep` for `VISA_83`
+across `disputedesk/` found it only inside a comment.
+
+**New claim:** a dispute arriving with `VISA_83` — the code Razorpay's own
+published chargeback reference lists for card-absent fraud, and the exact code
+`GENERATOR.md` §8 cites as this project's Visa source — was rejected with HTTP
+422 and nothing else happened. No decision row, no queue entry, no audit trace.
+A real chargeback with a real response deadline disappeared at the boundary.
+
+**Why the old claim was wrong:** it treated "malformed payload" and "reason
+code this system has no strategy for" as the same condition. They are not, and
+their correct outcomes are opposites. A malformed payload should be rejected
+loudly because there is nothing to act on. An unrecognised code is a
+well-formed dispute the system merely cannot handle *automatically* — the one
+thing it must never do is drop it. Choosing 422 optimised for "no unhandled
+500" over "no lost dispute", which is the wrong trade for the actual product.
+
+**Fix:**
+
+1. `data/reference/razorpay_chargeback_codes.csv` — Razorpay's published list,
+   all 71 rows across Mastercard/Visa/Amex, transcribed from
+   `https://cdn.razorpay.com/files/chargeback_codes.pdf` (retrieved 2026-09-02,
+   via `pdftotext -layout`). URL, retrieval date, and method are in the file's
+   own header comment. Transcribed verbatim including the source's typos.
+2. `disputedesk/evidence/published_reason_codes.py` — loads that fixture; the
+   accepted set is now a question about a data file with a source on it rather
+   than about a hand-typed enum.
+3. `reason_code` on the webhook is now `str` with a length bound only — no
+   value check and no character-class pattern, because a *malformed* code must
+   also reach the fallback rather than 422. Safe here specifically:
+   `reason_code` is never interpolated into a request path (only `id` and
+   `payment_id` are, and those keep their strict pattern), reaches SQLite only
+   as a bound parameter, and is consumed by an ordinal encoder that tolerates
+   unseen values and a dict lookup that now fails closed.
+4. Unrecognised codes route to a documented fallback: HTTP 200, a full audit
+   row tagged `validation_result="reason_code_unrecognised"`,
+   `human_review_required=True`, and an `api_outcomes` row with
+   `outcome="withheld_for_review"`. Nothing is filed in either direction.
+5. `LEGACY_WIRE_ALIASES = {"VISA_83": "VISA_10_4"}` in `reason_code_map.py` —
+   the alias the earlier commit message claimed, now actually implemented and
+   applied inside `required_evidence_types`, so a payload carrying the
+   published-but-retired code lands on the same evidence strategy rather than
+   in the review queue.
+
+**Deliberately not filed, not even as accept:** an unrecognised code withholds
+*both* directions, including an ACCEPT the policy engine reached. Accepting is
+irreversible, and this system does not know what it would be accepting.
+
+**A test was reversed, not deleted:**
+`test_unrecognized_reason_code_is_rejected` asserted the defect. It is now
+`test_an_unrecognized_reason_code_is_accepted_at_the_boundary`, with the
+reversal and its reason written into the test's own docstring so a reader of
+that file sees the history without coming here.
+
+**What this does not fix:** the system still has an evidence strategy for
+exactly four codes. Every other published code — 67 of the 71 — is queued for a
+person. That is the correct behaviour for a project scoped to one loss class
+(SPEC.md: "Exactly one. Nothing else."), and it is also an honest statement
+that this system automates a narrow slice of a merchant's dispute volume. The
+change is that the other 67 now arrive in a queue instead of vanishing.
+
+**Status:** DECIDED. Pinned by
+`tests/test_evidence_published_reason_codes.py` — 82 tests, including one
+parametrised over all 71 published codes asserting HTTP 200 for every one, and
+separate tests that a malformed code and an out-of-scope published code both
+reach the fallback rather than a 422.
