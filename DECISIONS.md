@@ -1716,3 +1716,89 @@ change is that the other 67 now arrive in a queue instead of vanishing.
 parametrised over all 71 published codes asserting HTTP 200 for every one, and
 separate tests that a malformed code and an out-of-scope published code both
 reach the fallback rather than a 422.
+
+---
+
+## 2026-09-02 — CORRECTION: the audit log was not append-only
+
+**Old claim:** `disputedesk/audit/models.py`: "Two tables, both append-only by
+construction: `disputedesk/audit/log.py` — the only module that writes to
+either — exposes insert-only functions and no update or delete path exists
+anywhere in the codebase." `disputedesk/audit/log.py`: "nothing calls `UPDATE`
+or `DELETE` anywhere in this module, by construction, not by convention
+alone." README and ARCHITECTURE.md both list "append-only audit log" as built.
+
+**New claim:** the *codebase* had no update or delete path. The *database* had
+no objection to one. The verification pass opened an ordinary session, mutated
+a `DecisionRecord`, committed, then deleted a row — both succeeded. Every claim
+above was a claim about the callers that existed on 2026-09-01, restated as if
+it were a property of the store. The one place the project got this right
+already — idempotency, enforced by a UNIQUE constraint precisely because
+PHASES.md said "enforce this in the database, not in application logic" — is
+the standard this failed to meet, in the same file.
+
+**Why the old claim was wrong:** "by construction" was doing work the
+construction did not do. An audit log's whole value is that its contents can be
+trusted by someone who does not trust the application, and every guarantee that
+lives only in application code is unavailable to exactly that reader. The
+wording ("not by convention alone") shows the distinction was understood and
+then not acted on.
+
+**Fix, two independent mechanisms answering two different threats:**
+
+1. **Triggers.** `install_append_only_guards` (`disputedesk/audit/db.py`)
+   creates `BEFORE UPDATE` and `BEFORE DELETE` triggers on both tables, each
+   `RAISE(ABORT, ...)`. Called from `init_db`, idempotent, so every process
+   start re-asserts them. This stops the ordinary path — a bug, a stray script,
+   a future code path.
+2. **Hash chain.** Every row stores `prev_hash` (its predecessor's `row_hash`)
+   and `row_hash` (SHA-256 over `prev_hash` plus the row's business fields,
+   `features_json` included). `verify_chain()`
+   (`disputedesk/audit/chain.py`) walks both tables and checks both links.
+   This catches an edit made by something that *could* drop the triggers.
+
+**What the chain does not do, stated rather than left to be assumed:** it is
+tamper-*evident*, not tamper-proof. An actor who can rewrite every row from the
+edit point forward, in order, produces a self-consistent chain. There is no
+off-box anchor — the head hash is not published anywhere — so nothing outside
+the database would notice. What the chain buys is that a tamper stops being a
+single silent `UPDATE` and becomes a full-suffix rewrite, and that any copy of
+any single `row_hash` taken off-box would catch even that. Recording the limit
+because a hash chain is exactly the kind of feature that invites the stronger
+claim.
+
+**A guarantee that got weaker, flagged first:** `disputedesk/audit/db.py`'s
+docstring previously said "nothing here is SQLite-specific except the
+`check_same_thread` connect arg", and CLAUDE.md's stack note says Postgres
+should be "a connection-string change, not a rewrite". Trigger DDL is
+dialect-specific and only the SQLite form is written and tested here, so
+`install_append_only_guards` **raises** `AppendOnlyGuardsUnavailableError` on
+any other dialect. A Postgres deployment now needs the connection string *plus*
+the equivalent DDL (or `REVOKE UPDATE, DELETE` on the application role, which
+is the better Postgres answer). Failing closed was chosen over shipping
+untested Postgres DDL and describing it as working — CLAUDE.md invariant 6.
+ARCHITECTURE.md's "Known gaps" says this outright.
+
+**One incidental correctness fix found while building this:** `created_at` was
+written tz-aware (`datetime.now(UTC)`) into a plain `DateTime` column, which
+SQLite stores without the offset and reads back naive. Harmless before, since
+nothing compared the two; fatal to a hash chain, which would commit to
+`...+00:00` at insert and recompute over `...` at verification, breaking the
+chain on rows nobody had touched. `now_utc()` now returns tz-naive UTC —
+storing what the database can actually store, rather than special-casing the
+hash function around a round-trip that was always lossy.
+
+**A race the chain introduces, and how it is closed:** two concurrent inserts
+could read the same chain tail and fork it. `prev_hash` is UNIQUE, so a fork is
+a constraint violation rather than a silent branch; the loser re-reads the tail
+and retries (`_insert_chained`, bounded at 5 attempts, then
+`ChainContentionError` with nothing recorded and nothing filed). Distinguishing
+a `dispute_id` collision (idempotency working — return the existing row) from a
+`prev_hash` collision (retry) is done by looking up the dispute, not by parsing
+driver error text.
+
+**Status:** DECIDED. Pinned by `tests/test_audit_append_only.py` — 12 tests:
+ordinary-session UPDATE and DELETE on both tables all raise, a raw-SQL UPDATE
+raises, and four chain-tamper tests that drop the triggers through a privileged
+connection and assert `verify_chain()` fails — including the hard case where the
+attacker recomputes the edited row's own `row_hash` to be self-consistent.

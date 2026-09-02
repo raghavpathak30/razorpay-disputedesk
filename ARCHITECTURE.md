@@ -256,6 +256,24 @@ HTTP 429 under rate limits during an eval run, which is what made the
   *rejected* by the live API, not merely incomplete. Recorded in
   `DECISIONS.md`'s 2026-09-02 entry of the same name; untested against the
   live API.
+- **Append-only guards are SQLite-only.** `disputedesk/audit/db.py`
+  installs `BEFORE UPDATE`/`BEFORE DELETE` triggers that make the audit
+  tables append-only in the database, not merely by convention — but the
+  DDL is written and tested for SQLite alone. `init_db` *raises* on any
+  other dialect rather than coming up with an audit log that claims to be
+  append-only and is not. So "Postgres is a connection-string change" is no
+  longer quite true: a Postgres deployment additionally needs the
+  equivalent trigger DDL, or (cleaner there) `REVOKE UPDATE, DELETE` on the
+  application role. The hash chain
+  (`disputedesk/audit/chain.py`, `verify_chain()`) is dialect-independent
+  and works either way.
+- **The hash chain is tamper-evident, not tamper-proof.** Someone who can
+  drop the triggers can still edit a row — the chain guarantees they cannot
+  do it invisibly, because every later row commits to the edited row's
+  content, so the edit becomes a rewrite of the whole suffix of the log.
+  There is no off-box anchor (no periodic publication of the head hash), so
+  a full-suffix rewrite by a sufficiently privileged actor would verify
+  clean. Stated as what it is.
 - **No order-context lookup.** The webhook assumes order-context fields
   (`avs_match` through `checkout_hour_of_day`) arrive already joined onto
   the dispute payload; a real deployment needs to build that join from the

@@ -60,6 +60,7 @@ from disputedesk.api.webhook import (
     get_model,
     get_razorpay_client,
 )
+from disputedesk.audit.chain import verify_chain
 from disputedesk.audit.db import get_engine, init_db, make_session_factory
 from disputedesk.audit.log import get_audit_trail
 from disputedesk.client.razorpay import FakeRazorpayClient, RazorpayHttpClient
@@ -225,6 +226,22 @@ def _print_audit_trail(engine, dispute_id: str) -> None:
         print(f"    response = {o.response_json}")
     else:
         print("  api outcome: none yet (escalated, or not filed)")
+    _print_chain_status(engine)
+
+
+def _print_chain_status(engine) -> None:
+    """The audit log is append-only in the database (UPDATE/DELETE triggers)
+    and hash-chained, so a tamper by anything able to drop those triggers is
+    still detectable. This prints the chain check so a viewer sees the claim
+    being verified rather than asserted.
+    """
+    session = make_session_factory(engine)()
+    try:
+        result = verify_chain(session)
+    finally:
+        session.close()
+    status = "intact" if result.ok else f"BROKEN: {result.problems}"
+    print(f"  audit chain: {status} ({result.rows_checked} rows verified)")
 
 
 def demo_end_to_end(client: TestClient, engine) -> None:

@@ -1,7 +1,13 @@
-"""The append-only audit log's only write and read paths (CLAUDE.md: "no
-update or delete path exists"). Every function here either inserts a new row
-or reads existing ones - nothing calls `UPDATE` or `DELETE` anywhere in this
-module, by construction, not by convention alone.
+"""The append-only audit log's only write and read paths. Every function here
+either inserts a new row or reads existing ones - no `UPDATE` or `DELETE`
+statement exists in this module.
+
+That was, until 2026-09-02, the whole of the append-only guarantee. It is now
+the *least* of it: the database refuses UPDATE and DELETE on these tables
+outright (`disputedesk/audit/db.py`), and every row commits to its predecessor
+(`disputedesk/audit/chain.py`). This module's job in that scheme is to compute
+each new row's place in the chain, and to handle the one race the chain
+introduces.
 """
 
 import json
@@ -11,13 +17,47 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from disputedesk.audit.models import ApiOutcome, DecisionRecord
+from disputedesk.audit.chain import compute_row_hash, latest_hash
+from disputedesk.audit.models import ApiOutcome, ChainedRecord, DecisionRecord, now_utc
+
+_MAX_CHAIN_ATTEMPTS = 5
+"""How many times an insert re-reads the chain tail after losing a race.
+
+A fork is impossible because `prev_hash` is UNIQUE, so two writers that read
+the same tail produce one commit and one `IntegrityError`; the loser re-reads
+and appends after the winner. The bound exists so a pathological write storm
+surfaces as an error rather than an unbounded loop - it is not a correctness
+parameter, and hitting it means contention far beyond anything this system's
+one-row-per-dispute write pattern produces.
+"""
+
+
+class ChainContentionError(RuntimeError):
+    """Raised when an audit insert lost `_MAX_CHAIN_ATTEMPTS` races for the
+    chain tail. The decision is *not* recorded - the caller must not proceed
+    to file, since "persisted before the API call" is the invariant that makes
+    the whole pipeline safe to retry.
+    """
 
 
 def get_decision(session: Session, dispute_id: str) -> DecisionRecord | None:
     return session.execute(
         select(DecisionRecord).where(DecisionRecord.dispute_id == dispute_id)
     ).scalar_one_or_none()
+
+
+def _link_into_chain(session: Session, row: ChainedRecord) -> None:
+    """Set `row`'s `prev_hash` from the current chain tail and compute its
+    `row_hash`. Called immediately before each insert attempt, so a retry
+    after a lost race re-reads the tail rather than re-using a stale one.
+    """
+    # `created_at` is part of the hashed payload, so it must be a real value
+    # before the digest is taken - the column's `default=` would not fire
+    # until flush, hashing a `None` the verifier would never recompute.
+    if row.created_at is None:
+        row.created_at = now_utc()
+    row.prev_hash = latest_hash(session, type(row))
+    row.row_hash = compute_row_hash(row.prev_hash, row.chain_payload())
 
 
 def record_decision(
@@ -63,13 +103,38 @@ def record_decision(
         validation_result=validation_result,
         human_review_required=human_review_required,
     )
-    session.add(row)
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        return get_decision(session, dispute_id), False  # type: ignore[return-value]
-    return row, True
+    return _insert_chained(session, row, lambda: get_decision(session, dispute_id))
+
+
+def _insert_chained(session, row, find_existing):
+    """Insert `row`, retrying only the chain-tail race.
+
+    Two different `IntegrityError`s can land here and they mean opposite
+    things. A `dispute_id` collision means another request already recorded
+    this dispute - that is the idempotency guarantee working, and the existing
+    row is returned with `was_newly_created=False`. A `prev_hash` collision
+    means another request appended to the chain first; nothing about *this*
+    dispute has been recorded, so the row is re-linked to the new tail and
+    retried. `find_existing()` tells the two apart without parsing the
+    driver's error text.
+    """
+    for _ in range(_MAX_CHAIN_ATTEMPTS):
+        _link_into_chain(session, row)
+        session.add(row)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            existing = find_existing()
+            if existing is not None:
+                return existing, False
+            continue
+        return row, True
+
+    raise ChainContentionError(
+        f"could not append to the audit chain after {_MAX_CHAIN_ATTEMPTS} attempts; "
+        "nothing was recorded and nothing must be filed"
+    )
 
 
 def get_api_outcome(session: Session, dispute_id: str) -> ApiOutcome | None:
@@ -104,13 +169,8 @@ def record_api_outcome(
         response_json=json.dumps(response, sort_keys=True) if response is not None else None,
         error=error,
     )
-    session.add(row)
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        return get_api_outcome(session, dispute_id)  # type: ignore[return-value]
-    return row
+    inserted, _was_new = _insert_chained(session, row, lambda: get_api_outcome(session, dispute_id))
+    return inserted
 
 
 @dataclass(frozen=True)
