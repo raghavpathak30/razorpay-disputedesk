@@ -42,7 +42,7 @@ import pandas as pd
 
 from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.draft_letter import PROMPT_VERSION, draft_explanation_letter
-from disputedesk.evidence.llm import GroqHttpLLMClient
+from disputedesk.evidence.llm import GroqHttpLLMClient, LLMClient
 from disputedesk.evidence.normalize_comms import normalize_communication_log
 from disputedesk.evidence.reason_code_map import required_evidence_types
 from disputedesk.generator.config import GeneratorConfig
@@ -81,6 +81,48 @@ def merge_and_write(path: Path, new_rows: list[dict]) -> None:
     combined.to_csv(path, index=False)
 
 
+def draft_corpus(
+    features_df: pd.DataFrame,
+    out: Path,
+    llm_client: LLMClient,
+    sleep_seconds: float,
+) -> None:
+    """The resumable drafting loop, factored out of `main()` so it is
+    callable with any `LLMClient` - a real one, or (2026-09-03, item 0.c) a
+    `FakeLLMClient` in a test that verifies resume across a full
+    stop-and-restart with no live calls at all.
+
+    Positions already checkpointed at `out` are skipped. Calling this twice
+    in a row with the same `out` and a `features_df` that is a superset of
+    what the first call covered is exactly what a crash-then-resume looks
+    like in production - `tests/test_eval_run_grounding_draft.py` exercises
+    precisely that.
+    """
+    done = already_drafted_positions(out)
+    if done:
+        print(f"resuming: {len(done)} position(s) already checkpointed in {out}")
+
+    for position, idx in enumerate(features_df.index):
+        if position in done:
+            continue
+        if position > 0 and sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+        row = features_df.loc[idx]
+        context = DisputeContext(**{f: row[f] for f in CONTEXT_FIELDS})
+        comms = normalize_communication_log(str(row["customer_communication_log"]), llm_client)
+        letter = draft_explanation_letter(
+            context, required_evidence_types(context.reason_code), comms.normalized, llm_client
+        )
+        new_row = {
+            "draft_index": position,
+            "letter_text": letter.letter_text,
+            "provenance": letter.provenance.value,
+            **{f: row[f] for f in CONTEXT_FIELDS},
+        }
+        merge_and_write(out, [new_row])
+        print(f"[{position + 1}] {letter.provenance.value}", flush=True)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Draft letters for the grounding-gate corpus.")
     parser.add_argument("--n-letters", type=int, default=250)
@@ -103,34 +145,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    done = already_drafted_positions(args.out)
-    if done:
-        print(
-            f"resuming: {len(done)}/{args.n_letters} positions already checkpointed in {args.out}"
-        )
-
     features_df, _debug = generate_dataset(args.n_letters, args.seed, GeneratorConfig())
-    llm = GroqHttpLLMClient()
-
-    for position, idx in enumerate(features_df.index):
-        if position in done:
-            continue
-        if position > 0 and args.sleep_seconds > 0:
-            time.sleep(args.sleep_seconds)
-        row = features_df.loc[idx]
-        context = DisputeContext(**{f: row[f] for f in CONTEXT_FIELDS})
-        comms = normalize_communication_log(str(row["customer_communication_log"]), llm)
-        letter = draft_explanation_letter(
-            context, required_evidence_types(context.reason_code), comms.normalized, llm
-        )
-        new_row = {
-            "draft_index": position,
-            "letter_text": letter.letter_text,
-            "provenance": letter.provenance.value,
-            **{f: row[f] for f in CONTEXT_FIELDS},
-        }
-        merge_and_write(args.out, [new_row])
-        print(f"[{position + 1}/{args.n_letters}] {letter.provenance.value}", flush=True)
+    draft_corpus(features_df, args.out, GroqHttpLLMClient(), args.sleep_seconds)
 
     frame = pd.read_csv(args.out)
     kept = int((frame["provenance"] == "model").sum())
