@@ -17,20 +17,22 @@ record before anything is allowed to leave the system), validates it against
 a schema, and writes an append-only audit row explaining the decision end to
 end.
 
-**What it does not do: file that evidence with Razorpay.** The `accept`
-call goes through — Razorpay's `accept` endpoint needs nothing beyond a
-dispute id, and the client calls it for real, in test mode. The `contest`
-call is built and sent the same way, but Razorpay's contest endpoint
-requires at least one document id attached as evidence when
-`action="submit"`, and this project has no document-upload pipeline — no
-code anywhere in this repository turns evidence into an uploaded file with
-an id. **A contest this system files today would very likely be rejected by
-the live API for that reason.** This is not a Limits-section footnote; it
-changes what the project *is*: an evidence-assembly, validation, and
-grounding pipeline that stops one step short of a working filer, not an
-end-to-end auto-contest system. See "What exists" below (the "Not built"
-paragraph) for the exact gap and `DECISIONS.md`'s 2026-09-02 "document id"
-entry for where it was found.
+**What it does, and what remains unverified about it.** The `accept` call
+goes through — Razorpay's `accept` endpoint needs nothing beyond a dispute
+id, and the client calls it for real, in test mode. The `contest` call now
+renders the required evidence bundle to PDF, uploads each document through
+Razorpay's documented upload endpoint, and attaches the returned ids to the
+submit payload under their evidence-type keys — the shape Razorpay's contest
+endpoint documents as required for `action="submit"`
+(`disputedesk/evidence/documents.py`, `disputedesk/client/razorpay.py`;
+2026-09-04 scoped reopening, closing the gap `DECISIONS.md`'s 2026-09-02
+"document id" entry found). **What this does not establish: that a live
+merchant account actually accepts it.** The upload and contest calls are
+conformant with Razorpay's own documented contract, tested throughout
+against recorded fixtures and `httpx.MockTransport` — never a real socket —
+and have never been executed against a live merchant account. See "What
+exists" below and `DECISIONS.md`'s 2026-09-04 entry for what changed and
+what is still unverified.
 
 Every number below is measured on a fully synthetic, documented dataset (see
 "What this dataset cannot tell you" below) — there is no real Razorpay
@@ -51,9 +53,9 @@ is a stub unless explicitly labelled one.
 | Feature builder | Built | `disputedesk/features/` |
 | Win-probability model (LightGBM) | Built | `disputedesk/model/` |
 | Policy engine | Built | `disputedesk/policy/` |
-| Evidence assembler (reason-code map + LLM drafting/normalisation) | Built | `disputedesk/evidence/` |
+| Evidence assembler (reason-code map + LLM drafting/normalisation + document rendering) | Built | `disputedesk/evidence/` |
 | Grounding gate (letter → record, fails closed to review) | Built, **unmeasured** | `disputedesk/evidence/grounding.py` |
-| Razorpay Disputes API client (test mode) | Built | `disputedesk/client/` |
+| Razorpay Disputes API client + document upload (test mode) | Built, **never run against a live account** | `disputedesk/client/` |
 | Append-only audit log (DB triggers + hash chain) | Built | `disputedesk/audit/` |
 | FastAPI webhook | Built | `disputedesk/api/` |
 | Demo CLI | Built | `disputedesk/cli/demo.py` |
@@ -61,11 +63,7 @@ is a stub unless explicitly labelled one.
 | Grounding-gate eval (corpus, baseline, intervals) | Built, **not yet run** | `eval/grounding_*.py` |
 
 **Not built, stated plainly rather than left for a reviewer to discover:**
-a document-upload pipeline (the real Razorpay `contest()` call submits the
-drafted letter as `summary` text; it does not attach the per-evidence-type
-document ids the live API also accepts, because this project never built a
-file-storage/upload path — see `disputedesk/client/razorpay.py`'s module
-docstring); an order-context lookup service (the webhook assumes
+an order-context lookup service (the webhook assumes
 `avs_match` through `checkout_hour_of_day` arrive already joined onto the
 dispute payload — a real deployment would fetch these from the merchant's
 own order/customer systems by `payment_id`, which this project does not
@@ -122,15 +120,19 @@ wins bigger, not just more often). A majority of seeds improving is not the
 same as the expected value improving, and at ₹50 those two readings
 disagree.
 
-**Every rupee figure above is contingent on a submission path that does not
-exist.** Razorpay's contest endpoint requires at least one document id
-under `action="submit"`; this project has no document-upload pipeline, and
-sends none. A contest this system files today would very likely be
-rejected by the live API. The *comparison* against baseline A is unaffected
-— it files through the same client and inherits the same gap — but every
-absolute "rupees recovered" number describes what the policy *would*
-recover if its filings were accepted, not what it has been shown to
-recover.
+**Every rupee figure above is contingent on a submission path never
+exercised in production.** As of the 2026-09-04 scoped reopening, the
+contest path attaches at least one uploaded document id under
+`action="submit"`, conformant with Razorpay's documented contract — the
+document-id gap itself is closed (`DECISIONS.md`'s 2026-09-04 entry). What
+that does not establish is whether a live merchant account accepts it: the
+upload and contest calls have been tested throughout against recorded
+fixtures and `httpx.MockTransport`, never a real socket, and have never run
+against a live Razorpay account. The *comparison* against baseline A is
+unaffected either way — it files through the same client and would inherit
+the same unverified status — but every absolute "rupees recovered" number
+still describes what the policy *would* recover if its filings are
+accepted, not what has been shown, in production, to be accepted.
 
 **The LLM extraction comparison carries two distinct limits, not one.** At
 n=60 the paired difference between the LLM's typed extraction and a TF-IDF
@@ -676,16 +678,24 @@ has an evidence strategy for — asserted in
 Phase 0 schema and prompt changes and needs a live API key to redo. Modelling
 it would have meant inventing a rate; it is excluded and named instead.
 
-**2. Whether a filed contest would be accepted at all.** Razorpay's contest
-endpoint requires at least one document id when `action="submit"`, and this
-project has no document-upload pipeline, so it sends none. **A contest filed
-by this system today would very likely be rejected by the live API.** Every
-absolute "rupees recovered" figure above therefore describes what the policy
-*would* recover if its filings were accepted. The *comparison* is unaffected —
-baseline A files through the same client and inherits the same gap — but the
-absolute totals are contingent on a component that does not exist. Recorded
-in code as `eval.cost_sensitivity.SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED
-= False`, with a test that keeps it false until the upload path is built.
+**2. Whether a filed contest would be accepted at all.** As of the
+2026-09-04 scoped reopening, the contest path attaches at least one
+uploaded document id when `action="submit"`, conformant with Razorpay's
+documented contract (`disputedesk/evidence/documents.py`,
+`disputedesk/client/razorpay.py`) — the gap that made rejection *certain*
+is closed. **What remains unverified is whether a live merchant account
+actually accepts it**: the upload and contest calls are tested throughout
+against recorded fixtures and `httpx.MockTransport`, never a real socket,
+and have never been executed against a live Razorpay account. Every
+absolute "rupees recovered" figure above therefore still describes what the
+policy *would* recover if its filings are accepted in production, not what
+has been shown to be accepted there. The *comparison* is unaffected —
+baseline A files through the same client and would inherit the same
+unverified status. Recorded in code as
+`eval.cost_sensitivity.SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED = False`,
+left `False` by this reopening — a documented-contract-conformant upload is
+not the same fact as a production-verified acceptance, and the sweep does
+not claim the latter.
 
 Full table: `DECISIONS.md`'s 2026-09-02 paired-estimator entry; raw data in
 `data/eval/cost_sensitivity_median_iqr.csv` after running the command above.

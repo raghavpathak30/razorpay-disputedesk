@@ -3278,3 +3278,127 @@ decision-making code. `docs/AI-SURFACE.md`'s ranking and the four killed
 candidates are untouched.
 
 **Status:** DECIDED.
+
+---
+
+## 2026-09-04 — Phase 5 freeze reopened, scoped to one defect: zero document ids on submit, fixed
+
+**Decision:** the Phase 5 freeze (declared 2026-09-01, reopened and
+re-frozen on 2026-09-02 for the grounding gate, reopened and re-frozen again
+on 2026-09-03 for documentation and audit work) is reopened for exactly one
+defect and **re-frozen on 2026-09-04**.
+
+**The defect.** Razorpay's contest endpoint documents that `action="submit"`
+requires at least one document id attached across the evidence-type fields
+(`https://razorpay.com/docs/api/disputes/contest/`). `RazorpayHttpClient.contest()`
+never populated any such field — every `action="submit"` this system ever
+sent went out with zero document ids, a shape the real API's own documented
+contract rejects. `tests/test_client_document_contract.py`, committed at
+`48d03bf` before any fix, proved it: `RazorpayHttpClient().contest(...)`
+called exactly as every other test in the repository already called it, and
+the request body asserted on the wire —
+
+    action='submit' carries zero document ids across every evidence-type
+    field - Razorpay's documented contract requires at least one.
+    Body: {'amount': 500000, 'summary': '...', 'action': 'submit'}
+
+— `assert 0 >= 1` failed, against unmodified code, as the dated record of the
+defect.
+
+**What was built, scoped to exactly this:** evidence bundle assembly →
+render → upload → capture document ids → include them in the submit
+payload. Nothing else changed.
+
+- `disputedesk/evidence/documents.py` (new): pure, no I/O. Renders each
+  required evidence type's known facts (never fabricated — no invented
+  signatures, tracking numbers, or receipts; see `docs/AI-SURFACE.md` §0.2
+  and `draft_letter.py`'s deterministic-fallback discipline) into a
+  hand-rolled minimal PDF — chosen because Razorpay's document endpoint
+  accepts only `image/jpg`, `image/jpeg`, `image/png`, `application/pdf`,
+  not plain text, and adding a PDF library was not asked for
+  (`CLAUDE.md`: "Do not introduce a new library without asking"). PDF
+  string-literal escaping is tested against literal injection-attempt
+  strings, since the customer-communication document embeds
+  attacker-influenced free text verbatim. The writer's byte-level structure
+  (xref offsets, `startxref`) is independently checked against Poppler's
+  `pdfinfo`/`pdftotext`, not just against itself.
+- `disputedesk/client/razorpay.py`: `contest()` now takes the rendered
+  bundle, uploads each document via the new `upload_document()` (real
+  multipart `POST /v1/documents`, `purpose="dispute_evidence"`), and attaches
+  the returned ids under their evidence-type keys before submitting. An
+  empty bundle is rejected before any network call — `DocumentUploadError`,
+  the same fail-closed shape `LetterNotSubmittableError` already gives the
+  letter-provenance gate, deliberately duplicated in `FakeRazorpayClient` so
+  the demo script and most tests can't re-open the invariant by a path only
+  they exercise.
+- `disputedesk/evidence/assembler.py` / `disputedesk/api/pipeline.py`:
+  `EvidencePacket.evidence_bundle` and `_EvidenceOutcome.evidence_bundle`
+  thread the rendered bundle through. `_file_if_needed` withholds for review
+  — not filed, no network call — when the bundle is `None` or empty, exactly
+  as it already withheld a non-`model` letter. An upload failure that
+  happens *inside* the client call (after the bundle looked fileable)
+  surfaces as `_file`'s existing "failed" outcome, the same as a contest-PATCH
+  timeout always has — the system degrades, it does not crash.
+
+**Invariants proven to still hold, each with its own test:**
+
+- The policy engine still cannot reach the LLM or the new documents module —
+  `tests/test_grounding_gate_pipeline.py::TestPolicyEngineCannotReachTheGate::test_the_policy_package_imports_nothing_from_evidence`
+  source-scans all of `disputedesk/policy/*.py`; unchanged, and it already
+  generically covers the new module since nothing in `policy/` imports it.
+- The grounding gate still gates before any upload, not just before the
+  contest PATCH —
+  `tests/test_grounding_gate_pipeline.py::TestWithheldLetterIsNotFiled::test_nothing_is_filed_in_either_direction`
+  now also asserts `razorpay.upload_calls == []` for a withheld letter.
+- Letter provenance still gates submission via the new signature —
+  `tests/test_evidence_letter_provenance.py`'s three direct-`contest()` tests
+  now pass a populated `evidence_bundle` specifically, proving the provenance
+  check still wins even when a bundle is present.
+- Idempotency still holds for re-submitted uploads —
+  `tests/test_evidence_document_pipeline_invariants.py::test_a_replayed_event_does_not_upload_documents_a_second_time`:
+  a replayed webhook event adds zero further `upload_document` calls, the
+  same DB-level `dispute_id` UNIQUE check every other idempotency guarantee
+  in this system already rests on.
+- The audit log stays append-only and its hash chain still verifies after a
+  real contest-with-documents flow —
+  `test_evidence_document_pipeline_invariants.py::test_the_audit_chain_still_verifies_after_a_contest_with_documents`.
+- Every new failure mode fails closed and is tested: an unrenderable bundle
+  and an empty-but-successfully-rendered bundle both withhold for review
+  before any network call
+  (`test_a_render_failure_withholds_for_review_and_never_reaches_the_client`,
+  `test_an_empty_rendered_bundle_withholds_for_review`); an upload that
+  raises and an upload that returns no id both degrade to a recorded
+  "failed" outcome rather than crashing the request
+  (`test_an_upload_failure_degrades_to_a_failed_outcome_not_a_crash`,
+  `test_an_upload_returning_no_id_degrades_to_a_failed_outcome_not_a_crash`).
+
+**`tests/test_client_document_contract.py` was deleted, not kept.** Its own
+docstring, written when it was committed, claimed it would be "kept,
+unmodified... as the dated record of the defect" — that claim turned out to
+be wrong. Once `contest()`'s signature grew a required 4th argument, the
+file's 3-argument call could no longer even be collected: it raised
+`TypeError: missing required argument`, not the original `AssertionError`,
+so keeping it would have broken suite collection entirely rather than
+preserving a record. The record is `48d03bf` itself, inspectable with
+`git show 48d03bf` — this entry corrects the file's own prior claim.
+
+**What this does not establish.** Not claimed: that this has been run
+against production Razorpay. It has not. The accurate statement is that the
+contest path — evidence rendering, document upload, and the submit payload
+shape — is conformant with Razorpay's documented API contract, and has never
+been executed against a live merchant account. Every test runs against
+`httpx.MockTransport` and recorded fixtures, never a real socket
+(`CLAUDE.md`: "No test may make a network call"). The rupee figures recorded
+elsewhere in `README.md` and `NUMBERS.md` are unchanged by this reopening and
+remain contingent on that same unexercised submission path — closing the
+document-id gap makes rejection no longer *certain*; it does not make
+acceptance *verified*. `README.md`'s opening paragraph and Limits section are
+updated to say exactly this, not more.
+
+**What did not change:** the model, the feature set, policy thresholds, the
+cost sweep, the grounding gate, the leakage guards, or any recorded number.
+`eval.cost_sensitivity.SWEEP_ASSUMES_EVERY_SUBMISSION_IS_ACCEPTED` is
+untouched and stays `False` — a documented-contract-conformant upload is not
+the same fact as a production-verified acceptance.
+
+**Status:** DECIDED.

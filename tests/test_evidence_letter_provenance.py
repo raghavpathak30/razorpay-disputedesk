@@ -28,6 +28,7 @@ from disputedesk.api.schemas import DisputeEntity
 from disputedesk.audit.db import get_engine, init_db, make_session_factory
 from disputedesk.client.razorpay import FakeRazorpayClient, RazorpayHttpClient
 from disputedesk.evidence.context import DisputeContext
+from disputedesk.evidence.documents import EvidenceDocument
 from disputedesk.evidence.draft_letter import draft_explanation_letter
 from disputedesk.evidence.letter import (
     NETWORK_SUMMARY_MAX_CHARS,
@@ -63,6 +64,12 @@ NORMALIZED_COMMS = NormalizedCommunicationLog(
 
 def _letter_response(body: str) -> str:
     return json.dumps({"letter_text": body, "cites_evidence_types": ["billing_proof"]})
+
+
+def _bundle() -> tuple[EvidenceDocument, ...]:
+    return (
+        EvidenceDocument(evidence_type="billing_proof", filename="b.pdf", content=b"%PDF-fake"),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -169,8 +176,11 @@ def test_the_http_client_refuses_a_fallback_letter_before_any_network_call(
         cites_evidence_types=("explanation_letter",),
         provenance=LetterProvenance.FALLBACK,
     )
+    # A populated bundle changes nothing - 2026-09-04 reopening: provenance
+    # is still checked first, so a fallback letter cannot reach the upload
+    # step via this new argument either.
     with pytest.raises(LetterNotSubmittableError):
-        RazorpayHttpClient().contest("disp_1", 100.0, fallback)
+        RazorpayHttpClient().contest("disp_1", 100.0, fallback, evidence_bundle=_bundle())
 
 
 def test_the_http_client_submits_a_model_letter_verbatim(monkeypatch, _settings_env):
@@ -181,6 +191,8 @@ def test_the_http_client_submits_a_model_letter_verbatim(monkeypatch, _settings_
     body = "m" * NETWORK_SUMMARY_MAX_CHARS
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/documents":
+            return httpx.Response(200, json={"id": "doc_1"})
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"id": "disp_1", "status": "under_review"})
 
@@ -197,7 +209,7 @@ def test_the_http_client_submits_a_model_letter_verbatim(monkeypatch, _settings_
         cites_evidence_types=("billing_proof",),
         provenance=LetterProvenance.MODEL,
     )
-    RazorpayHttpClient().contest("disp_1", 100.0, letter)
+    RazorpayHttpClient().contest("disp_1", 100.0, letter, evidence_bundle=_bundle())
 
     assert seen["body"]["summary"] == body
     assert seen["body"]["action"] == "submit"
@@ -215,8 +227,9 @@ def test_the_fake_client_enforces_the_same_invariant_as_the_real_one():
     )
     fake = FakeRazorpayClient()
     with pytest.raises(LetterNotSubmittableError):
-        fake.contest("disp_1", 100.0, fallback)
+        fake.contest("disp_1", 100.0, fallback, evidence_bundle=_bundle())
     assert fake.contest_calls == []
+    assert fake.upload_calls == []
 
 
 # --------------------------------------------------------------------------

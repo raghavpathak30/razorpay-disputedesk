@@ -23,6 +23,7 @@ from disputedesk.audit.models import ApiOutcome, DecisionRecord
 from disputedesk.client.razorpay import RazorpayClient
 from disputedesk.evidence.assembler import assemble_evidence_packet
 from disputedesk.evidence.context import DisputeContext
+from disputedesk.evidence.documents import EvidenceDocument
 from disputedesk.evidence.draft_letter import PROMPT_VERSION as _LETTER_PROMPT_VERSION
 from disputedesk.evidence.grounding import PROMPT_VERSION as _GROUNDING_PROMPT_VERSION
 from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
@@ -105,6 +106,13 @@ class _EvidenceOutcome:
     # The letter object, not its text: `_file_if_needed` needs its
     # `provenance` to decide whether it may be filed at all (defect 0.1).
     letter: DraftedLetter | None
+    # The rendered documents to upload, or None when nothing was assembled
+    # (no evidence strategy for this reason code) or rendering failed
+    # (2026-09-04 reopening, defect 0.4). `_file_if_needed` withholds a
+    # contest whose bundle is None or empty before it ever reaches the
+    # client - the same fail-closed shape the letter provenance check
+    # already has.
+    evidence_bundle: tuple[EvidenceDocument, ...] | None
 
 
 _NO_EVIDENCE = _EvidenceOutcome(
@@ -112,6 +120,7 @@ _NO_EVIDENCE = _EvidenceOutcome(
     validation_result="not_applicable",
     human_review_required=False,
     letter=None,
+    evidence_bundle=None,
 )
 
 # The documented fallback for a reason code this system has no evidence
@@ -123,6 +132,7 @@ _UNRECOGNISED_REASON_CODE = _EvidenceOutcome(
     validation_result="reason_code_unrecognised",
     human_review_required=True,
     letter=None,
+    evidence_bundle=None,
 )
 
 
@@ -162,6 +172,7 @@ def _assemble_evidence_if_contesting(
         validation_result=_validation_result_for(packet),
         human_review_required=packet.human_review_required,
         letter=packet.explanation_letter,
+        evidence_bundle=packet.evidence_bundle,
     )
 
 
@@ -272,9 +283,27 @@ def _file_if_needed(
                 action,
                 f"explanation letter provenance is {provenance!r}, not 'model'",
             )
-        return _file(session, razorpay_client, dispute_id, "contest", amount_inr, letter)
+        if not evidence.evidence_bundle:
+            # Razorpay's contest endpoint requires at least one document id
+            # under action="submit" (2026-09-04 reopening, defect 0.4) - a
+            # letter alone is not fileable, regardless of its provenance.
+            return _withhold_for_review(
+                session,
+                dispute_id,
+                action,
+                "evidence bundle is empty or failed to render; no document to attach",
+            )
+        return _file(
+            session,
+            razorpay_client,
+            dispute_id,
+            "contest",
+            amount_inr,
+            letter,
+            evidence.evidence_bundle,
+        )
 
-    return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None)
+    return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None, None)
 
 
 _ACTION_BY_BRANCH = {Decision.CONTEST: "contest", Decision.ACCEPT: "accept"}
@@ -311,22 +340,26 @@ def _file(
     action: str,
     amount_inr: float,
     letter: DraftedLetter | None,
+    evidence_bundle: tuple[EvidenceDocument, ...] | None,
 ) -> ApiOutcome:
     """Call the Razorpay client for `action` (retry/backoff on timeout or
     429 already happens inside the client - see
     `disputedesk/client/razorpay.py`) and record exactly one outcome row,
     success or failure. SPEC.md §7 failure path 1: if every retry inside the
-    client is exhausted, the exception is caught here, not left to crash the
-    request - the system degrades to a "failed" audit row a human can act
-    on, and a later replay of the same webhook event is still safe (the
+    client is exhausted, or a document upload fails or returns no id
+    (2026-09-04 reopening), the exception is caught here, not left to crash
+    the request - the system degrades to a "failed" audit row a human can
+    act on, and a later replay of the same webhook event is still safe (the
     `api_outcomes` UNIQUE constraint means a retry-by-replay can only ever
-    produce this same row again, never a second filing).
+    produce this same row again, never a second filing or a second set of
+    uploads).
     """
     try:
         if action == "contest":
-            # `letter` is non-None and submittable here - `_file_if_needed`
-            # withholds anything else before reaching this function.
-            response = razorpay_client.contest(dispute_id, amount_inr, letter)
+            # `letter` is non-None and submittable, and `evidence_bundle` is
+            # non-empty, here - `_file_if_needed` withholds anything else
+            # before reaching this function.
+            response = razorpay_client.contest(dispute_id, amount_inr, letter, evidence_bundle)
         else:
             response = razorpay_client.accept(dispute_id)
     except Exception as error:  # noqa: BLE001 - genuinely any failure must degrade, not crash

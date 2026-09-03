@@ -114,6 +114,10 @@ class TestWithheldLetterIsNotFiled:
 
         assert razorpay.contest_calls == []
         assert razorpay.accept_calls == []
+        # 2026-09-04 reopening: a withheld letter must not reach the upload
+        # step either - the gate still gates before any document is filed,
+        # not just before the contest PATCH.
+        assert razorpay.upload_calls == []
         assert result.api_outcome.outcome == "withheld_for_review"
         assert "failed_grounding" in result.api_outcome.error
 
@@ -184,9 +188,10 @@ class TestGroundedLetterStillFiles:
         result = _run(session, _entity(), llm, razorpay)
 
         assert result.decision_row.validation_result == "validated"
-        dispute_id, amount, letter = razorpay.contest_calls[0]
+        dispute_id, amount, letter, evidence_bundle = razorpay.contest_calls[0]
         assert (dispute_id, amount) == ("disp_g1", 5000.0)
         assert letter.provenance is LetterProvenance.MODEL
+        assert len(evidence_bundle) > 0
         assert result.api_outcome.outcome == "success"
 
 

@@ -110,10 +110,11 @@ def test_contest_path_assembles_evidence_and_files_via_the_client(session, monke
     assert result.policy_decision.decision == Decision.CONTEST
     assert result.decision_row.validation_result == "validated"
     assert result.decision_row.human_review_required is False
-    dispute_id, amount, letter = razorpay.contest_calls[0]
+    dispute_id, amount, letter, evidence_bundle = razorpay.contest_calls[0]
     assert (dispute_id, amount) == ("disp_1", 5000.0)
     assert letter.letter_text == "y" * 80
     assert letter.submittable is True
+    assert len(evidence_bundle) > 0
     assert razorpay.accept_calls == []
     assert result.api_outcome.outcome == "success"
 
@@ -160,7 +161,7 @@ def test_decision_row_exists_before_the_api_call_is_made(session, monkeypatch):
         def accept(self, dispute_id):
             raise AssertionError("accept should not be called for this test")
 
-        def contest(self, dispute_id, amount_inr, letter):
+        def contest(self, dispute_id, amount_inr, letter, evidence_bundle):
             seen["decision_persisted_at_call_time"] = get_decision(session, dispute_id) is not None
             raise httpx.TimeoutException("simulated - retries already exhausted inside the client")
 
@@ -240,7 +241,7 @@ def test_replayed_event_after_an_api_failure_does_not_retry_via_the_pipeline(ses
         def accept(self, dispute_id):
             raise AssertionError
 
-        def contest(self, dispute_id, amount_inr, letter):
+        def contest(self, dispute_id, amount_inr, letter, evidence_bundle):
             self.contest_calls.append(dispute_id)
             raise httpx.TimeoutException("simulated - retries exhausted")
 

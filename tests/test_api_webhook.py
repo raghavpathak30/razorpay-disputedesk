@@ -120,9 +120,10 @@ def test_valid_open_dispute_event_returns_200_and_contests(wired_app):
     assert body["dispute_id"] == "disp_1"
     assert body["decision"] == "contest"
     assert body["already_processed"] is False
-    dispute_id, amount, letter = fake_razorpay.contest_calls[0]
+    dispute_id, amount, letter, evidence_bundle = fake_razorpay.contest_calls[0]
     assert (dispute_id, amount) == ("disp_1", 5000.0)
     assert letter.letter_text == "y" * 80
+    assert len(evidence_bundle) > 0
 
 
 def test_malformed_webhook_is_rejected_with_422_and_not_processed(wired_app):
