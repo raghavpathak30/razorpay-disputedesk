@@ -3591,3 +3591,45 @@ README additions, eval-only.
 band cost with its own directly-paired CI, and states explicitly whether
 that CI excludes zero).
 **Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Grounding-gate measurement, small-n run pre-registered
+
+**n and why.** n=45 letters drafted (`--seed 0`), all three corpus classes
+graded in full: 45 clean, 45 unrecorded (Class B), up to 45 contradiction
+(Class A — actual count depends on how many drafts mention a flippable field,
+unknown until the run). This n is budget-bound, not power-bound: at 599
+tokens/call (this project's own recorded empirical rate) and 5 calls/letter
+worst case, n=45 uses ≈134,775 of the 200,000 TPD ceiling, leaving 32.6%
+headroom. It was not chosen to hit a target CI width.
+
+**Priority.** Class A/B (false-pass: does the gate let a genuinely ungrounded
+letter through) is the priority metric — it bears on the track's disqualifying
+criterion around ungrounded claims reaching the network, and is currently
+"unmeasured... a separate, still-open question" per the README. False-flag
+(clean class) is measured too, since at this n it fits in full alongside A/B
+with no separate sacrifice — the cost per class is symmetric (one grading
+call regardless of class), so full 3-class grading fits the budget up to
+n≈46 before any tradeoff would be needed at all; pushing n further to narrow
+the Class A/B interval was considered and rejected (n 45→52 would buy ~7%
+narrower Class A/B CIs at the cost of cutting the clean sample by ~44%, a
+poor trade not worth making unprompted).
+
+**Estimators.** Clopper-Pearson exact 95% CI (`eval/grounding_stats.clopper_pearson`,
+added this session) on: the gate's false-flag rate (clean class); the gate's
+false-pass rate on Class A (contradiction) and Class B (unrecorded), reported
+separately, never pooled — pooling would let the easy class (A) carry the
+hard one (B) and obscure a real difference between the two failure modes.
+
+**Published regardless of outcome.** The result is reported whatever it is,
+including a miss against the 2.3% budget or a high false-pass rate on either
+class. A zero-event count on either false-pass class will be reported as the
+count plus its Clopper-Pearson upper bound, not as "the gate caught
+everything" — zero events at n≤45 does not rule out a true miss rate in the
+high single digits.
+
+**No adjustment after seeing the result.** n will not be increased, and the
+run will not be repeated with a different seed, to obtain a better number.
+
+**Status:** PRE-REGISTERED. Run follows this commit.
