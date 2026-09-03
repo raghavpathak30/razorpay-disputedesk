@@ -3402,3 +3402,25 @@ untouched and stays `False` — a documented-contract-conformant upload is not
 the same fact as a production-verified acceptance.
 
 **Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Generator parameters sourced against published statistics (Phase 1, calibration provenance)
+
+**Decision:** Sourced generator parameters against published statistics
+without regenerating data (rule 5). Values recorded as inside/outside
+published ranges; nothing changed to fit.
+**Why:** `CALIBRATION.md` was added as a citation index — the value each
+generator parameter with a real-world analogue uses, the published range, the
+named source, and whether the configured value falls inside or outside that
+range. Two rows have no generator analogue at all (chargeback base rate,
+VAMP/ECM threshold) and are recorded as such rather than force-fit to a
+generator field that doesn't exist. One row — friendly-fraud share — falls
+outside its published range (generator: 50–60%; published ceiling: 43.8%,
+Chargebacks911 2026) and is recorded as outside, not adjusted. The generator
+itself was not touched; no number recorded elsewhere in this repo moved as a
+result of this entry.
+**Reproduce:** `cat CALIBRATION.md` (external-citation index; not reproduced
+by a command, since the published-range figures are not computed by this
+repo — see `NUMBERS.md`'s "Calibration provenance" row).
+**Status:** DECIDED.

@@ -18,6 +18,12 @@ exists to keep visible.
 
 ---
 
+## Calibration provenance
+
+| Claim | Value | Command |
+|---|---|---|
+| Generator parameters sourced against published statistics (chargeback rate, friendly-fraud share, win rate, contest cost, analyst cost, VAMP threshold, reason-code mix) | See `CALIBRATION.md` — an external-citation index, not a number this repo computes, so it is not reproduced by a command here | `CALIBRATION.md` |
+
 ## Generator and model quality
 
 | Claim | Value | Command |
