@@ -3424,3 +3424,117 @@ result of this entry.
 by a command, since the published-range figures are not computed by this
 repo — see `NUMBERS.md`'s "Calibration provenance" row).
 **Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Phase 2: EV threshold verified, calibration and escalate band checked
+
+**Decision:** Phase 2 was an investigation, not a refactor. It set out to
+derive a cost-sensitive contest threshold (Elkan, "The Foundations of
+Cost-Sensitive Learning", IJCAI 2001: `contest iff p_win > cost/amount`) and
+found `disputedesk/policy/engine.py`'s `decide()` already implements exactly
+that rule — `expected_value = p_win * amount - representment_cost; contest
+iff expected_value > 0` has been SPEC.md §4's specification since Phase 3,
+and is algebraically identical to the Elkan ratio. No refactor was made. Two
+follow-up checks (calibration of `p_win`; cost of the escalate band) were
+run as eval-only what-ifs on top of this finding, per instruction. No number
+in `NUMBERS.md`'s existing headline rows changed as a result of any of this.
+
+**1. Threshold — already derived, not refactored.**
+`policy/config.py` has no fixed probability constant serving as a contest
+threshold; the only scalar there is `low_confidence_band = (0.45, 0.55)`,
+which gates ESCALATE and never participates in the CONTEST-vs-ACCEPT
+boundary. Cost-model check: the ₹400 (`REPRESENTMENT_COST_INR`, including
+its bundled ₹150 analyst-time component) is charged only on CONTEST, and
+regardless of win/lose (`eval/business_metrics.py:recovered_rupees`);
+ACCEPT is the zero-cost reference by construction; the recoverable amount
+is the gross `amount` field with no separate non-refundable fee anywhere in
+the codebase (grepped, none exists). All four match Elkan's assumptions
+exactly, so `C/A` is the correct expression with no algebra correction
+needed. `tests/test_policy_ev_threshold_is_derived.py` pins the equivalence
+against real holdout predictions (seed 0, n=5,000) rather than asserting it
+from reading code alone — both tests pass immediately (characterization,
+not a bug fix).
+
+**2. Calibration of `p_win` — the unchecked Elkan precondition.**
+No calibration step exists anywhere in `disputedesk/model/` — grepped for
+`CalibratedClassifierCV`, `isotonic`, `sigmoid`, `Platt`; none found.
+`LGBMClassifier.predict_proba`'s raw output is used as `p_win` directly.
+Measured on the standard 20 seeds × 15,000 rows (`eval/run_calibration_report.py`,
+new eval-only module — `eval/calibration.py` gained `brier_score` and
+`near_threshold_reliability`, both unit-tested):
+
+- **Brier score:** median 0.1697 (IQR 0.1670–0.1715) across seeds, versus
+  0.1812 for a baseline that always predicts the training-split prevalence
+  (0.2377 × 0.7623) — the model is modestly better than that floor, not
+  dramatically so, consistent with the modest PR-AUC lift over prevalence
+  reported elsewhere in this file.
+- **Reliability table** (10 equal-width bins, pooled across all 20 seeds'
+  holdouts, n=72,130):
+
+  | bin | count | mean predicted p | observed win rate |
+  |---|---|---|---|
+  | 0.0–0.1 | 15,259 | 0.0716 | 0.0892 |
+  | 0.1–0.2 | 16,951 | 0.1423 | 0.1418 |
+  | 0.2–0.3 | 12,623 | 0.2529 | 0.2804 |
+  | 0.3–0.4 | 16,670 | 0.3500 | 0.3507 |
+  | 0.4–0.5 | 8,613 | 0.4389 | 0.3768 |
+  | 0.5–0.6 | 1,731 | 0.5355 | 0.3807 |
+  | 0.6–0.7 | 261 | 0.6353 | 0.4330 |
+  | 0.7–0.8 | 22 | 0.7208 | 0.4091 |
+
+  Calibration is reasonably tight through 0.0–0.4 (gaps ≤0.028). Above 0.4
+  the model is **overconfident and increasingly so** — gap widens from
+  +0.062 (0.4–0.5 bin) to +0.312 (0.7–0.8 bin) — but those bins also carry
+  collapsing sample size (8,613 down to 22), so the tail figure is as much a
+  small-sample warning as a calibration verdict. `p_max = 0.75` in
+  `GeneratorConfig` means the generator itself rarely produces disputes with
+  a true win probability above 0.75, so this tail region is inherently
+  sparse by construction, not just by model behavior.
+- **Near-threshold reliability** — the region that actually matters for the
+  Elkan decision, since a calibration gap elsewhere can't flip a
+  contest/accept call: rows where `p_win` sits within ±0.05 of *that row's
+  own* `cost/amount` (the threshold is per-dispute, so "near the threshold"
+  is evaluated per-row, not against one global cutoff). Pooled across all
+  20 seeds: n=15,028 of 72,130 (~20.8% of the holdout is a "close call" by
+  this definition). Mean predicted p 0.1061 vs. observed win rate 0.1223 —
+  gap **−0.0162**, i.e. the model is mildly *underconfident* here, the
+  opposite direction from the high-p tail. Overall median derived threshold
+  across the holdout: 0.0628.
+
+  **Finding, as-is per instruction (rule 1):** calibration is not uniform.
+  It is reasonably good specifically in the low-to-mid range where most
+  decisions actually get made (median threshold ≈0.063, gap ≈−0.016 near
+  it), and poor in a sparse, rarely-decision-relevant high-probability tail.
+  No calibrator was added. This is recorded as a limit, not corrected.
+
+**3. Cost of the escalate band.**
+`low_confidence_band = (0.45, 0.55)` runs before the EV check and overrides
+it regardless of sign — a deliberate, documented departure from
+EV-optimality (SPEC.md §4's "I don't know" path), not an accident. Measured
+eval-only (`eval/escalate_band_counterfactual.py`, new module — reimplements
+the plain EV rule read-only; `disputedesk/policy/engine.py` and `config.py`
+were never touched or called with a modified band), standard 20 seeds ×
+15,000 rows, configured ₹400 cost:
+
+- **Band fraction of holdout:** median 0.0562 (IQR 0.0485–0.0624) — matches
+  the already-published, separately-tested escalate rate exactly
+  (`tests/test_eval_cost_sensitivity.py::test_escalate_rate_is_invariant_to_cost_per_seed`),
+  cross-validating the new module against the existing one.
+- **Counterfactual (band-free EV rule) advantage vs. baseline A:** paired
+  mean +11,478.0 (95% CI +8,746.4 to +13,936.5, 19/20 seeds positive).
+- **Actual (banded) advantage:** paired mean +11,210.3 (95% CI +8,507.9 to
+  +13,633.3, 19/20 seeds positive) — matches the already-published headline
+  exactly, same cross-validation.
+- **Delta:** +267.7 INR/1,000 (≈2.4% of the headline advantage) — what the
+  escalate band costs, in exchange for routing ~5.6% of disputes to human
+  review of the genuinely uncertain region instead of an automated call.
+  Reported as-is; the band was not removed or narrowed.
+
+**Reproduce:**
+```
+pytest tests/test_policy_ev_threshold_is_derived.py -v
+python -m eval.run_calibration_report
+python -m eval.run_escalate_band_counterfactual
+```
+**Status:** DECIDED.

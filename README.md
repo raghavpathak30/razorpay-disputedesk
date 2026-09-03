@@ -92,6 +92,53 @@ at ₹200 and grows from there — by ₹2,000 it is +685,586/1,000, by ₹10,00
 it is +7,555,900/1,000. The configured ₹400 sits just above the threshold
 where the effect appears, not deep inside the regime where it is robust.
 
+**Contest threshold.** The contest decision was not retrofitted to be
+cost-sensitive. `decide()` has computed `expected_value = p_win * amount -
+representment_cost` since Phase 3, which is algebraically the Elkan (2001)
+cost-ratio rule: contest iff `p_win > representment_cost / amount`. This is
+a per-dispute threshold, not a constant, because `amount` varies row to row.
+Phase 2 verified this against the cost model rather than changing it: the
+₹400 is charged only on contest and regardless of contest outcome, accept
+is the zero-cost reference, and the recoverable amount is the gross
+`amount` with no separate non-refundable fee. Tests pinning this
+relationship are in `tests/test_policy_ev_threshold_is_derived.py`. These
+are characterization tests over an already-correct implementation, not a
+bug fix.
+
+**Calibration of `p_win` — the Elkan threshold's unchecked precondition.**
+`p > cost/amount` is only the EV-optimal rule if `p_win` is calibrated; no
+calibration step exists anywhere in this repo (`disputedesk/model/train.py`
+fits a raw `LGBMClassifier`, no `CalibratedClassifierCV`/isotonic/sigmoid
+wrapper). Measured on the standard 20 seeds × 15,000 rows
+(`eval/run_calibration_report.py`): **Brier score** median 0.1697 (IQR
+0.1670–0.1715), modestly better than a 0.1812 always-predict-prevalence
+floor. The **reliability table** (10 bins, pooled, n=72,130) is reasonably
+tight through predicted p 0.0–0.4 (gaps ≤0.028) but **overconfident above
+0.4**, worsening from +0.062 to +0.312 by the 0.7–0.8 bin — though that tail
+also collapses in sample size (8,613 down to 22), since `p_max=0.75` in
+`GeneratorConfig` makes it inherently sparse. What matters more:
+**calibration in the region that actually drives decisions** — rows within
+±0.05 of *that row's own* `cost/amount` (~20.8% of the holdout, n=15,028 of
+72,130) — shows a small gap of **−0.0162** (mildly underconfident, the
+opposite direction from the high-p tail), against a median derived
+threshold of 0.0628. **No calibrator was added.** Calibration is uneven —
+good where most decisions are actually made, poor in a sparse tail — and is
+recorded here as-is, not corrected.
+
+**Escalate band.** `low_confidence_band = (0.45, 0.55)` is a deliberate
+departure from EV-optimality: it routes the ~5.6% of holdout disputes whose
+predicted `p_win` falls in that range to human review, overriding whatever
+the EV rule would have said, in exchange for an honest "I don't know" path
+(SPEC.md §4) rather than an automated call on the genuinely uncertain
+region. Quantified eval-only, with no change to the policy engine
+(`eval/run_escalate_band_counterfactual.py`, standard 20 seeds × 15,000
+rows): a counterfactual where those same disputes followed the plain EV
+rule instead of escalating would advantage baseline A by paired mean
++11,478.0 (95% CI +8,746.4 to +13,936.5) versus the actual +11,210.3 the
+band produces — a cost of **+267.7 INR/1,000, ≈2.4% of the headline
+advantage**. The band is kept; this is the price of the human-review path,
+not a defect.
+
 **Review cost.** The cost sweep above credits every CONTEST decision as
 filed and charges nothing for the human time that isn't. Solving for the
 review cost that exactly cancels the ₹400 advantage gives **≈₹200 per

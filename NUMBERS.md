@@ -65,6 +65,25 @@ exists to keep visible.
 | Paired advantage, configured cost | +11,210 (95% CI +8,508 to +13,633, 19/20 seeds) | `python -m eval.run_cost_sensitivity --n-seeds 20 --n-rows 15000` |
 | Advantage as % of baseline A | ≈0.66% | derived: 11,210.3 / 1,701,092.5 |
 
+## Phase 2 — EV threshold verification (no number moved)
+
+Phase 2 found the contest/accept decision already derived from the cost
+model (`decide()`'s `expected_value = p_win * amount - representment_cost`
+has been SPEC.md §4's rule since Phase 3) — algebraically the Elkan (2001)
+`p > cost/amount` threshold. Nothing was refactored; these rows are the
+verification, not a change. Full detail: `DECISIONS.md` 2026-09-03 "Phase 2
+— EV threshold verified, calibration and escalate band checked".
+
+| Claim | Value | Command |
+|---|---|---|
+| Threshold equivalence pinned on real holdout predictions | `decide()`'s CONTEST decision == `p_win > cost/amount` on every non-escalated holdout row | `pytest tests/test_policy_ev_threshold_is_derived.py -v` |
+| Brier score, model vs. always-predict-prevalence baseline | 0.1697 (IQR 0.1670–0.1715) vs. 0.1812 baseline | `python -m eval.run_calibration_report` |
+| Reliability table (10 bins, pooled across 20 seeds, n=72,130) | see DECISIONS.md entry for the full table | same |
+| Near-threshold reliability (±0.05 of each row's own `cost/amount`) | mean predicted 0.1061 vs. observed 0.1223 (gap −0.0162), n=15,028/72,130; overall median derived threshold 0.0628 | same |
+| Escalate band fraction of holdout | 0.0562 (IQR 0.0485–0.0624) | `python -m eval.run_escalate_band_counterfactual` |
+| Band-free EV-rule counterfactual advantage vs. baseline A, ₹400 | +11,478.0 (95% CI +8,746.4 to +13,936.5, 19/20 seeds) | same |
+| Delta vs. published actual advantage (+11,210.3) | +267.7 INR/1,000 (≈2.4% of the headline) — the escalate band's cost | same |
+
 ## Cost sweep (paired estimator)
 
 | Claim | Value | Command |

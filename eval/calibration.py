@@ -4,6 +4,7 @@ Computed on the holdout only, per CLAUDE.md invariant 2.
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import brier_score_loss
 
 
 def calibration_table(
@@ -48,3 +49,57 @@ def expected_calibration_error(
     gaps = (table["mean_predicted_p"] - table["observed_win_rate"]).abs()
     weights = table["count"] / table["count"].sum()
     return float((gaps * weights).sum())
+
+
+def brier_score(predicted_p: np.ndarray, labels: np.ndarray) -> float:
+    """Mean squared error between predicted `P(win)` and the realized {0,1}
+    outcome (Brier, 1950) - a proper scoring rule, unlike ECE's binned
+    summary, so it can't be gamed by bin placement. Thin wrapper around
+    sklearn so every caller in this package uses the same definition.
+    """
+    return float(
+        brier_score_loss(np.asarray(labels, dtype=float), np.asarray(predicted_p, dtype=float))
+    )
+
+
+def near_threshold_reliability(
+    predicted_p: np.ndarray,
+    labels: np.ndarray,
+    amount: np.ndarray,
+    representment_cost_inr: float,
+    band: float = 0.05,
+) -> dict:
+    """Calibration restricted to the rows that actually matter for the
+    Elkan/EV decision: those whose predicted `p_win` sits within `band` of
+    *that row's own* derived threshold `representment_cost_inr / amount`
+    (Phase 2 STEP A - the threshold is per-dispute, not a scalar, so "near
+    the threshold" must be evaluated per-dispute too, not against one global
+    cutoff). This is where a calibration gap would actually flip a
+    contest/accept decision; calibration elsewhere on the curve does not.
+    """
+    predicted_p = np.asarray(predicted_p, dtype=float)
+    labels = np.asarray(labels, dtype=float)
+    amount = np.asarray(amount, dtype=float)
+    per_row_threshold = representment_cost_inr / amount
+    near_mask = np.abs(predicted_p - per_row_threshold) <= band
+
+    if not near_mask.any():
+        return {
+            "band": band,
+            "count": 0,
+            "mean_predicted_p": float("nan"),
+            "observed_win_rate": float("nan"),
+            "gap": float("nan"),
+            "median_threshold_overall": float(np.median(per_row_threshold)),
+        }
+
+    mean_p = float(predicted_p[near_mask].mean())
+    observed = float(labels[near_mask].mean())
+    return {
+        "band": band,
+        "count": int(near_mask.sum()),
+        "mean_predicted_p": mean_p,
+        "observed_win_rate": observed,
+        "gap": mean_p - observed,
+        "median_threshold_overall": float(np.median(per_row_threshold)),
+    }
