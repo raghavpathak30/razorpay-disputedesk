@@ -82,7 +82,7 @@ verification, not a change. Full detail: `DECISIONS.md` 2026-09-03 "Phase 2
 | Near-threshold reliability (±0.05 of each row's own `cost/amount`) | mean predicted 0.1061 vs. observed 0.1223 (gap −0.0162), n=15,028/72,130; overall median derived threshold 0.0628 | same |
 | Escalate band fraction of holdout | 0.0562 (IQR 0.0485–0.0624) | `python -m eval.run_escalate_band_counterfactual` |
 | Band-free EV-rule counterfactual advantage vs. baseline A, ₹400 | +11,478.0 (95% CI +8,746.4 to +13,936.5, 19/20 seeds) | same |
-| Delta vs. published actual advantage (+11,210.3) | +267.7 INR/1,000 (≈2.4% of the headline) — the escalate band's cost | same |
+| Band cost, directly paired per seed (not a difference of two marginal estimates) | +267.7 INR/1,000 (95% CI +146.4 to +397.3, 16/20 seeds positive — excludes zero) | same |
 
 ## Cost sweep (paired estimator)
 

@@ -3538,3 +3538,56 @@ python -m eval.run_calibration_report
 python -m eval.run_escalate_band_counterfactual
 ```
 **Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Escalate-band cost corrected to a directly-paired estimate
+
+**Decision:** The prior entry's escalate-band cost (+267.7 INR/1,000) was
+reported as a bare point estimate — `counterfactual_advantage.mean_difference
+- actual_advantage.mean_difference`, a difference of two *separately*
+bootstrapped paired-vs-baseline-A estimates, each with its own marginal CI.
+That is not a valid comparison: subtracting two point estimates and quoting
+neither CI (or worse, quoting one arm's marginal CI next to the other's
+point estimate) says nothing about whether the two arms actually differ.
+
+**Why this is fixable exactly, not approximately:** for a given seed,
+`advantage_EV_rule(s) = counterfactual_recovered(s) - baseline_a(s)` and
+`advantage_actual(s) = actual_recovered(s) - baseline_a(s)`. Their difference
+is `counterfactual_recovered(s) - actual_recovered(s)` — `baseline_a(s)`
+cancels algebraically, so the correctly-paired delta is a *direct* pairing
+of `counterfactual_recovered` against `actual_recovered`, bootstrapped once
+over those 20 seed-pairs, not derived from the other two CIs at all.
+
+`eval/escalate_band_counterfactual.py:summarize_band_counterfactual` now
+computes this directly (`band_cost = paired_difference(counterfactual_recovered,
+actual_recovered)`), replacing the old `delta_mean` scalar. Re-run at the
+standard 20 seeds × 15,000 rows, configured ₹400 cost:
+
+- **Mean point estimate unchanged:** +267.7 INR/1,000 (confirms the earlier
+  arithmetic was correct as far as it went — the bug was the missing CI, not
+  the mean itself; `tests/test_eval_escalate_band_counterfactual.py` now
+  pins this algebraic equivalence).
+- **Paired 95% CI: +146.4 to +397.3.** Excludes zero.
+- **16 of 20 seeds positive.**
+- **Conclusion: the band's cost is distinguishable from zero at this sample
+  size.** Per instruction, had the CI included zero the correct published
+  statement would have been "not distinguishable from zero," not the point
+  estimate alone — that caveat does not apply here, but the interval is
+  reported either way, not just the mean.
+
+Also added, per instruction: a README Limits paragraph on band misalignment
+(the band is anchored to p_win=0.5, a symmetric-classification-problem
+boundary, while this system's actual decision boundary — median `cost/amount`
+across the holdout — is 0.0628; the band therefore diverts clear-contest
+cases into human review rather than sitting near the genuinely uncertain
+region), and one sentence in the calibration section noting the near-threshold
+underconfidence (predicted 0.1061 vs. observed 0.1223) biases the reported
++11,210.3 advantage toward a conservative floor, not an optimistic estimate.
+No policy, model, or generator code changed; this is a statistics fix and two
+README additions, eval-only.
+
+**Reproduce:** `python -m eval.run_escalate_band_counterfactual` (prints the
+band cost with its own directly-paired CI, and states explicitly whether
+that CI excludes zero).
+**Status:** DECIDED.

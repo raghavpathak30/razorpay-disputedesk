@@ -47,7 +47,15 @@ def main(argv: list[str] | None = None) -> None:
     print("Counterfactual (band-free EV rule) advantage vs. baseline A:")
     print(f"  {format_paired(summary['counterfactual_advantage'], unit='INR/1,000')}")
     print()
-    print(f"Delta (counterfactual - actual), paired mean: {summary['delta_mean']:,.1f} INR/1,000")
+    band_cost = summary["band_cost"]
+    print("Band cost (counterfactual - actual), directly paired per seed (not a difference")
+    print("of two separately-bootstrapped point estimates):")
+    print(f"  {format_paired(band_cost, unit='INR/1,000')}")
+    if band_cost.excludes_zero:
+        print("  -> 95% CI excludes zero: the band's cost is distinguishable from zero.")
+    else:
+        print("  -> 95% CI includes zero: the band's cost is NOT distinguishable from zero")
+        print("     at this sample size (do not report the point estimate alone).")
 
 
 if __name__ == "__main__":

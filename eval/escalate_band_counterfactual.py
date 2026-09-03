@@ -114,22 +114,28 @@ def run_band_counterfactual(
 
 def summarize_band_counterfactual(results: pd.DataFrame, random_state: int = 0) -> dict:
     """Paired advantage over baseline A for both the actual (banded) policy
-    and the band-free-EV counterfactual, plus the delta between them - the
-    cost (or saving) of running the escalate band instead of the plain EV
-    rule, in the same paired-mean terms the published headline uses.
+    and the band-free-EV counterfactual, and the band's cost as its own
+    directly-paired quantity - not a difference of two separately-bootstrapped
+    point estimates, which would compare a point estimate against a marginal
+    CI and answer nothing about whether the two arms actually differ.
+
+    `advantage_EV_rule(s) - advantage_actual(s)` cancels `baseline_a(s)`
+    algebraically (it's the same value in both terms for a given seed), so
+    the correctly-paired delta is exactly
+    `counterfactual_recovered(s) - actual_recovered(s)`, computed once per
+    seed and bootstrapped over *those* pairs directly.
     """
     ordered = results.sort_values("seed")
     baseline_a = ordered["baseline_a_recovered_per_1000_inr"].to_numpy()
+    actual_recovered = ordered["actual_policy_recovered_per_1000_inr"].to_numpy()
+    counterfactual_recovered = ordered["counterfactual_policy_recovered_per_1000_inr"].to_numpy()
 
-    actual_advantage = paired_difference(
-        ordered["actual_policy_recovered_per_1000_inr"].to_numpy(),
-        baseline_a,
-        random_state=random_state,
-    )
+    actual_advantage = paired_difference(actual_recovered, baseline_a, random_state=random_state)
     counterfactual_advantage = paired_difference(
-        ordered["counterfactual_policy_recovered_per_1000_inr"].to_numpy(),
-        baseline_a,
-        random_state=random_state,
+        counterfactual_recovered, baseline_a, random_state=random_state
+    )
+    band_cost = paired_difference(
+        counterfactual_recovered, actual_recovered, random_state=random_state
     )
 
     return {
@@ -138,5 +144,5 @@ def summarize_band_counterfactual(results: pd.DataFrame, random_state: int = 0) 
         "escalate_rate_q75": float(ordered["escalate_rate"].quantile(0.75)),
         "actual_advantage": actual_advantage,
         "counterfactual_advantage": counterfactual_advantage,
-        "delta_mean": counterfactual_advantage.mean_difference - actual_advantage.mean_difference,
+        "band_cost": band_cost,
     }

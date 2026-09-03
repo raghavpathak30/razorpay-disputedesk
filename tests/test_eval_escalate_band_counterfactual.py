@@ -4,6 +4,7 @@ eval-only with no change to `disputedesk/policy/`.
 """
 
 import numpy as np
+import pytest
 
 from disputedesk.policy.engine import Decision, decide
 from eval.escalate_band_counterfactual import (
@@ -47,10 +48,22 @@ def test_run_band_counterfactual_runs_end_to_end_on_a_small_seed_set():
     assert (results["escalate_rate"] > 0).all()  # the band should bind on some rows at this scale
 
 
-def test_summarize_band_counterfactual_reports_a_delta_between_the_two_paired_advantages():
+def test_band_cost_mean_matches_the_difference_of_the_two_advantage_means():
+    # baseline_a(s) is identical in both advantage(s) terms for a given seed,
+    # so it must cancel algebraically: band_cost's mean equals the difference
+    # of the two separately-computed advantage means, even though its own CI
+    # is a directly-paired bootstrap over (counterfactual - actual), not a
+    # combination of the other two arms' marginal CIs.
     results = run_band_counterfactual(CI_SEEDS, CI_N_ROWS, CI_COST)
     summary = summarize_band_counterfactual(results)
     counterfactual = summary["counterfactual_advantage"].mean_difference
     actual = summary["actual_advantage"].mean_difference
-    expected_delta = counterfactual - actual
-    assert summary["delta_mean"] == expected_delta
+    assert summary["band_cost"].mean_difference == pytest.approx(counterfactual - actual)
+
+
+def test_band_cost_has_its_own_directly_paired_confidence_interval():
+    results = run_band_counterfactual(CI_SEEDS, CI_N_ROWS, CI_COST)
+    summary = summarize_band_counterfactual(results)
+    band_cost = summary["band_cost"]
+    assert band_cost.n_pairs == len(CI_SEEDS)
+    assert band_cost.ci_low <= band_cost.mean_difference <= band_cost.ci_high

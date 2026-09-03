@@ -123,21 +123,29 @@ also collapses in sample size (8,613 down to 22), since `p_max=0.75` in
 opposite direction from the high-p tail), against a median derived
 threshold of 0.0628. **No calibrator was added.** Calibration is uneven —
 good where most decisions are actually made, poor in a sparse tail — and is
-recorded here as-is, not corrected.
+recorded here as-is, not corrected. In the region where decisions actually
+flip, the model is mildly underconfident (mean predicted 0.1061 vs observed
+0.1223). The bias therefore runs toward accepting disputes that were in
+fact winnable, which means the reported advantage of +11,210.3 is a
+conservative floor rather than an optimistic estimate.
 
-**Escalate band.** `low_confidence_band = (0.45, 0.55)` is a deliberate
-departure from EV-optimality: it routes the ~5.6% of holdout disputes whose
-predicted `p_win` falls in that range to human review, overriding whatever
-the EV rule would have said, in exchange for an honest "I don't know" path
-(SPEC.md §4) rather than an automated call on the genuinely uncertain
-region. Quantified eval-only, with no change to the policy engine
-(`eval/run_escalate_band_counterfactual.py`, standard 20 seeds × 15,000
-rows): a counterfactual where those same disputes followed the plain EV
-rule instead of escalating would advantage baseline A by paired mean
-+11,478.0 (95% CI +8,746.4 to +13,936.5) versus the actual +11,210.3 the
-band produces — a cost of **+267.7 INR/1,000, ≈2.4% of the headline
-advantage**. The band is kept; this is the price of the human-review path,
-not a defect.
+**Escalate band misalignment.** The low-confidence escalate band is
+configured as p_win in [0.45, 0.55], which is anchored to 0.5 — the
+boundary of a symmetric classification problem. This system's actual
+decision boundary is p_win > representment_cost / amount, whose median
+across the holdout is 0.0628. The band therefore does not sit near the
+region where the contest/accept decision is genuinely close; it diverts
+cases that are clear contests under the cost model into human review.
+Measured cost of the band versus following the EV rule: +267.7 INR/1,000,
+95% CI +146.4 to +397.3. Aligning the band to the per-dispute threshold
+rather than to 0.5 is the obvious next change; it was identified but
+deliberately not made before the submission freeze, because it alters
+policy behaviour and there was no time to re-verify.
+
+(Paired per seed, not a difference of two separately-bootstrapped point
+estimates — see `NUMBERS.md`'s "Phase 2" section: the interval excludes
+zero, 16/20 seeds positive, so this cost is distinguishable from zero at
+this sample size, not merely a point estimate.)
 
 **Review cost.** The cost sweep above credits every CONTEST decision as
 filed and charges nothing for the human time that isn't. Solving for the
