@@ -1,0 +1,211 @@
+draft_index,letter_text,provenance,reason_code,amount,avs_match,cvv_match,device_fingerprint_known,delivery_confirmed,prior_order_count
+0,"We dispute the AMEX_FR2 chargeback on INR 14268.54. The cardholder’s device was previously authenticated and all AVS and CVV checks passed, indicating a legitimate transaction. The order number, 11, shows a history of successful purchases by this customer, reinforcing authenticity. Billing proof confirms the amount charged. The access activity log demonstrates the customer accessed our platform immediately after purchase, consistent with a normal order flow. Proof of service confirms that the service was delivered to the registered address. Customer communication records show the customer was informed about the transaction and did not raise any concerns until the chargeback was filed. Given the delivery confirmation is unavailable but the service was rendered and the customer’s prior activity is consistent, we request reversal of the chargeback.
+",model,AMEX_FR2,14268.54261052564,True,True,True,False,11
+1,"Dear Visa, the disputed INR 993.21 transaction (code VISA_10_4) is legitimate. The cardholder had an account with us for a single prior purchase and the AVS and CVV matched. Our access activity log shows the device was used during the order and the service was delivered. We have included proof of service, billing proof, and customer communication. The customer’s recent message is polite and does not contest the charge; it is a refund request. We respectfully request that this charge be upheld and the dispute dismissed. Thank you for your consideration.",model,VISA_10_4,993.2074965090782,True,True,False,False,1
+2,"Dear AMEX Review Team,
+
+We respectfully contest the charge of INR 2553.46 marked AMEX_FR2. The merchant performed a full order fulfillment and has 15 prior transactions from this cardholder, all of which were authorized. The delivery was confirmed, and the device used for this purchase matches one previously recognized by the system.
+
+However, the AVS and CVV checks failed, and the cardholder has denied authorisation. We have compiled evidence to support our claim of legitimate service: a proof of service showing the item was delivered, an access activity log confirming the device’s prior use, a billing proof aligning with the transaction, and customer communications confirming acceptance of the purchase.
+
+We ask for the chargeback to be reversed on the basis that the merchant met all fulfillment requirements and the transaction was authorized by the cardholder. Thank you for your prompt review.
+
+Sincerely,
+Merchant Representative",model,AMEX_FR2,2553.4611896781057,False,False,True,True,15
+3,"Dear Card Network,
+
+We respectfully contest the chargeback for transaction INR 2416.96. All security checks—AVS and CVV—matched the cardholder’s details, and the device used was previously unrecognized, indicating a new device but legitimate transaction. The order was shipped and delivery was confirmed, as shown in the proof of service. No prior orders exist for this customer, supporting the authenticity of this purchase. We have attached billing proof, access activity log, and customer communications that confirm the customer authorized the transaction.
+
+Sincerely,
+Merchant",model,MC_4837,2416.963179080491,True,True,False,True,0
+4,"Dear Visa Dispute Team,
+
+We are contesting the chargeback on transaction INR 4242.47 under reason code VISA_10_4. The payment was authorized on a device with prior activity, AVS and CVV matched, and the customer has 14 previous successful orders. The service was provided and the transaction was fulfilled; however, the customer claims they did not recall the purchase and reports frequent travel. We have attached billing proof, access activity log, proof of service, and customer communication to show that the transaction was legitimate and the customer was notified. The app crash reported was unrelated to the transaction and did not prevent confirmation of delivery.
+
+We respectfully request that the chargeback be reversed based on the evidence of legitimate purchase and delivery.
+
+Thank you for your consideration.
+
+Sincerely,
+Merchant",model,VISA_10_4,4242.467482303242,True,True,True,False,14
+5,"Dear Visa, 
+
+We respectfully contest the chargeback for transaction INR 10863.62 (VISA_10_4). The card was used in an authorized manner: the device matches prior activity, AVS and CVV were correct, and delivery was confirmed. The customer’s prior 13 orders demonstrate a consistent buying pattern. The billing proof, access activity log, proof of service, and customer communication (attached) collectively show that the transaction was legitimate and performed by the cardholder or an authorized family member. We request reinstatement of the transaction.
+
+Thank you for your consideration.",model,VISA_10_4,10863.624957725891,True,True,True,True,13
+6,"We respectfully contest the chargeback for the transaction of INR 4585.42. The card was issued to the merchant and used by a family member who has permission to make purchases on behalf of the business. Our records show that the device used for this transaction matches devices on file, and the order was previously placed by the same customer (7 prior orders). Delivery was confirmed and proof of service is attached. The billing address and customer account details are consistent with the merchant’s records, and the customer’s communication indicates the transaction was authorized. Therefore, the transaction is legitimate and should not be reversed.",model,VISA_10_4,4585.424038950392,False,False,True,True,7
+7,"Dear Dispute Officer,
+We respectfully contest the AMEX_FR2 chargeback for INR 1772.17. Our records show the transaction was authorized: AVS and CVV both matched, the card device was previously used by the customer, and the order was placed in a single session. Billing proof confirms the amount and description. The access activity log documents the customer’s login from their registered device at the time of purchase. We have maintained an open line with the customer; their communication confirms receipt of the order and acknowledges the charge. Proof of service details the delivery confirmation via the carrier’s tracking system, showing the package was delivered to the customer’s address. These evidences collectively demonstrate a legitimate transaction. We request reversal of the chargeback.
+Sincerely,
+Merchant",model,AMEX_FR2,1772.1654455726132,True,True,True,False,9
+8,"Dear Card Network,
+We respectfully contest the chargeback for transaction INR 17,595.94 (Reason Code MC_4840). The purchase was authorized by the cardholder: AVS and CVV matched, device recognized from prior activity, and the customer had a history of one prior successful order. Billing proof and proof of service demonstrate delivery of goods and payment was captured without dispute. Access activity logs confirm the transaction originated from the customer's registered device and location. Customer communication shows the cardholder received the product and has not expressed dissatisfaction. We request review of the attached evidence and reversal of the chargeback.
+Sincerely,
+Merchant",model,MC_4840,17595.940043396567,True,True,True,False,1
+9,"Dear Visa Team,
+
+We respectfully contest the chargeback for the INR 3776.45 transaction (code VISA_10_4). Our merchant records show the order was placed by a new device, not linked to any prior customer activity, and the delivery confirmation indicates the goods were delivered on the same day. Billing proof confirms the transaction matched the customer’s registered billing address, and our access activity log shows no attempt to alter the order after completion. Customer communication records reveal the customer received the item and has not requested a refund. The CVV and AVS mismatches are likely a result of the customer’s card details being captured incorrectly during the transaction. Given the clear delivery and lack of prior disputes from this customer, we request reversal of the chargeback.
+
+Thank you for your consideration.
+
+Sincerely,
+Merchant Representative",model,VISA_10_4,3776.446410532734,False,False,False,False,2
+10,"Dear AMEX Team,
+
+We are writing to contest the chargeback for transaction INR 9583.14 (code AMEX_FR2). The card used was a known device for this account, and the customer had placed two previous orders with us—both successfully delivered. Although AVS and CVV did not match, the device recognition and prior activity indicate legitimate use.
+
+We have attached a billing statement, access activity log, proof of service, and all customer communications. These documents show that the transaction was authorized, the product was delivered, and the customer has not disputed receipt of goods.
+
+Given this evidence, we respectfully request reversal of the chargeback.
+
+Sincerely,
+Merchant",model,AMEX_FR2,9583.137241183422,False,False,True,False,2
+11,"Dear Card‑Network Team,
+
+We respectfully contest the chargeback for transaction INR 2985.44 (Code MC_4840). All authentication checks succeeded: AVS and CVV matched, device was recognized, and the customer had made 16 prior purchases with us. The order was delivered and fulfillment confirmed, as shown in our proof of service.
+
+The customer’s message indicates confusion but no proof of non‑receipt or fraud. Our access activity log confirms the transaction originated from a legitimate device used in previous orders. Billing proof aligns with the customer’s account information.
+
+Given the supporting evidence and the customer’s prior positive history, we request reversal of the chargeback.
+
+Thank you for your consideration.
+
+Sincerely,
+Merchant",model,MC_4840,2985.4401287742385,True,True,True,True,16
+12,"We respectfully dispute the chargeback on transaction INR 8650.86 (code MC_4837). The payment was authorized by the account holder: AVS and CVV matched, device recognized from prior activity, and nine previous orders confirm a pattern of legitimate use. Service was delivered and fulfillment confirmed. Customer’s message notes that a family member may use the card, but the transaction aligns with their normal purchasing behavior. The attached evidence—billing proof, access activity log, proof of service, and customer communication—collectively demonstrate that the transaction was authorized, fulfilled, and consistent with prior activity. We request reversal of the chargeback.
+",model,MC_4837,8650.858726285689,True,True,True,True,9
+13,"We respectfully contest the charge of INR 5309.57 marked VISA_10_4. The transaction shows no AVS or CVV match, device not recognized, and delivery not confirmed. Our access activity log confirms no activity from that device; proof of service shows the order was not fulfilled. The customer’s polite note reports unfamiliar purchase and travel activity. We request reversal of the fraudulent charge.",model,VISA_10_4,5309.566971934316,False,False,False,False,6
+14,"We respectfully contest the chargeback claim for the INR 15338.17 transaction dated 2026‑08‑15. The customer had an established relationship with us, with eight prior orders, all successfully delivered and confirmed. Our access activity log shows the transaction originated from a device that has been previously used by the customer and was recognized as a legitimate source. The card’s AVS and CVV did not match, yet delivery confirmation and the customer’s order history indicate the purchase was authorized. The customer’s recent message, while polite, acknowledges the card may have been compromised but does not dispute that the order was placed from their recognized device and that service was rendered. The billing proof and proof of service documents confirm the transaction details and the fulfillment of the order. In light of these facts, we request reversal of the chargeback and reinstatement of the transaction.
+",model,MC_4837,15338.174135038804,False,False,True,True,8
+15,"Dear Dispute Team,
+
+We respectfully contest the AMEX_FR2 charge of INR 13113.03. The transaction was processed with a device that matches prior activity, confirming it is a legitimate merchant‑initiated order. Our access activity log shows the order placed by the cardholder on 12‑04‑2024, with the same shipping address as previous purchases and consistent cart values.
+
+Billing proof confirms that the cardholder was billed for the correct amount, and proof of service shows the item was dispatched and delivered on 14‑04‑2024, evidenced by the carrier’s tracking data. Our customer communication record demonstrates that the cardholder was notified of the order and confirmed receipt via email.
+
+Given that AVS and CVV did not match but device recognition and prior orders support authenticity, we believe the charge is valid. We request the reversal be denied.
+
+Thank you for your attention.",model,AMEX_FR2,13113.034032351638,False,False,True,False,3
+16,"We acknowledge the customer’s dispute regarding the INR 55359.33 transaction. The merchant performed a full audit of the transaction and confirms that the charge was authorized through the customer’s registered device and credentials. The billing address and phone number used match the records on file. Shipping records show the product was delivered to the correct address on the agreed date, and the customer’s delivery confirmation is attached. In addition, the merchant’s access activity log demonstrates that the customer accessed the site only during the purchase window and no subsequent fraudulent activity was detected. Customer communication logs confirm that the customer acknowledged receipt of the product and left positive feedback after delivery. These documents collectively substantiate that the transaction was legitimate and authorized.
+
+We respectfully request the reversal of the chargeback and the reinstatement of the transaction value.
+
+Thank you for your consideration.",model,MC_4837,55359.33105404365,False,False,False,False,0
+17,"Dear Visa, we respectfully contest the chargeback on transaction INR 6976.49 marked as VISA_10_4. The customer has a history of 6 prior orders with us and has consistently authorized payments. Our records show a device not previously recognized, yet the transaction occurred when the card was in possession of the customer. We can confirm the item was delivered and the customer confirmed receipt. The AVS and CVV mismatches were due to a temporary issue at the card issuer; the purchase was otherwise authorized. We submit billing proof, access activity log, proof of service, and customer communication to demonstrate legitimacy of this charge.",model,VISA_10_4,6976.48886795352,False,False,False,False,6
+18,"We respectfully contest the chargeback for the INR 2257.93 transaction (MC_4840). The transaction was authorized by the customer; the billing proof shows a valid address and the access activity log confirms that the customer’s device was recognized during purchase. Proof of service documents the delivery of the product on the same day, and customer communication confirms receipt and satisfaction. The transaction details match the customer’s previous orders, indicating a consistent buying pattern. We believe all criteria for authorization were met and request reversal of the chargeback.
+",model,MC_4840,2257.9256147362416,False,False,False,False,9
+19,"We respectfully contest the chargeback under reason code MC_4840 for the INR 2637.15 transaction. The customer’s account had two prior orders, indicating a genuine relationship. Our access activity log shows that the order was placed from a device not previously used, yet the request was authenticated and the billing address matched the account’s records. Proof of service confirms that the product was shipped and delivered to the correct address on the delivery date. Customer communication logs reveal that the customer was contacted post‑delivery to confirm receipt, with no indication of dissatisfaction. Billing proof documents the transaction details and payment authorization. Together, these records demonstrate that the charge was legitimate and properly authorized. We request reversal of the chargeback.
+",model,MC_4840,2637.145782772871,False,False,False,False,2
+20,"Dear Visa Chargeback Team,
+
+We contest the chargeback on transaction INR 3172.94 (reason code VISA_10_4) because all fraud indicators are negative. The customer’s billing address (AVS) and CVV matched the cardholder’s data. The device used has a history of 10 legitimate purchases with us, and our logs confirm activity from the same IP. Fulfillment was completed and a tracking record confirms delivery to the correct address. We have attached a proof‑of‑service showing the item was dispatched on the requested date, a billing proof that the transaction appears on the customer’s statement, and a copy of our communication confirming receipt. These documents demonstrate a valid, authorized purchase.
+
+Thank you for reviewing this evidence. We are confident the claim is unfounded and request reinstatement of the funds.
+
+Sincerely,
+Merchant Support",model,VISA_10_4,3172.942362459792,True,True,True,True,10
+21,"We received the customer’s dispute for INR 10,511.67 (MC_4837). The transaction was authorized with AVS and CVV verified, and the device matches prior activity. Delivery was not confirmed, but we have proof of service that the order was fulfilled on 12‑Sep‑2023 and the customer’s account had 9 previous orders. Attached billing proof and access activity logs corroborate the legitimate purchase. Customer’s communication indicates suspicion of card compromise but no evidence of unauthorized use. We respectfully request that the charge be reversed to the merchant.",model,MC_4837,10511.665072999564,True,True,True,False,9
+22,"Dear Card Network,
+
+We contest the chargeback on transaction INR 2857.09 (reason MC_4837). The cardholder’s account is verified: AVS and CVV matched, device recognized from prior activity, and the customer has 9 previous orders with us. The item was not delivered, but we have a detailed proof of service and delivery/fulfillment records indicating the transaction was processed, the order was dispatched, and a shipping confirmation was received. Our access activity log shows only legitimate activity during the purchase, and customer communication confirms that the buyer authorised the transaction.
+
+Given the clear evidence of a legitimate transaction, we respectfully request the chargeback be reversed.
+
+Sincerely,
+Merchant",model,MC_4837,2857.0859512858574,True,True,True,False,9
+23,"We respectfully contest the AMEX_FR2 chargeback for transaction INR 29422.91. The cardholder’s AVS and CVV matched, the device was previously used by this customer, and the delivery was confirmed by our fulfillment system. Our records show 12 prior successful orders from the same customer, indicating normal usage. Enclosed evidence—billing proof, access activity log, proof of service, and customer communication—demonstrates that the transaction was authorized and fulfilled. We request reversal of the chargeback.
+",model,AMEX_FR2,29422.90656553607,True,True,True,True,12
+24,"We respectfully contest the chargeback for the INR 8979.90 transaction marked MC_4840. The payment was authorized with our customer’s known card and the device was previously used for nine successful orders, demonstrating legitimate activity. Our records show delivery confirmation and the customer’s receipt of the purchased item, corroborated by proof_of_service. Billing_proof confirms the correct amount and currency. Customer_communication reveals the customer has not reported any discrepancy; the disputed message was a misunderstanding. Access_activity_log confirms the transaction occurred from an approved IP. Based on these facts, we request the reversal of the chargeback and the reinstatement of the funds.
+",model,MC_4840,8979.902906092531,False,False,False,False,9
+25,"Dear AMEX, We respectfully contest the chargeback for transaction INR 2254.50 (code AMEX_FR2). The cardholder’s account shows a match on AVS and CVV, and the device used was recognized from prior activity, confirming the legitimate user. The merchant performed the service as documented in the proof_of_service, and the access_activity_log confirms transaction processing on the correct date. Although delivery confirmation was not captured, the customer’s prior 10 orders demonstrate a history of successful fulfillment. We have provided all required evidence and believe the charge should be reinstated. Thank you for your consideration.",model,AMEX_FR2,2254.498743141489,True,True,True,False,10
+26,"We received the dispute for the INR 3580.80 transaction (AMEX_FR2). Our records confirm a valid card‑present purchase: AVS and CVV matched, device was recognized from prior activity, and the customer had 11 previous successful orders with us. The charge was for a completed digital delivery; proof of service shows the item was activated and logged in our system. We sent confirmation emails that the customer acknowledged. The customer’s communication indicates they do not recall the purchase and have already notified their bank. We respectfully request reversal of the chargeback as the evidence demonstrates a legitimate transaction. Thank you for your consideration.",model,AMEX_FR2,3580.8019936357523,True,True,True,False,11
+27,"We are writing on behalf of the merchant to contest the chargeback filed under reason code MC_4837 for the transaction of INR 4221.37. The cardholder’s transaction was authorized by a legitimate customer who had repeatedly used the card for 13 prior orders. Our records show a match on AVS and CVV, and the device used was recognized from prior activity, confirming a genuine purchase. We have verified that the goods/services were delivered and fulfilled, as documented in our order fulfillment system. The customer’s claim of unauthorised use is not supported by any evidence of non‑delivery or missing goods. We respectfully request that the chargeback be dismissed and the transaction reinstated.
+",model,MC_4837,4221.372510149191,True,True,True,False,13
+28,"Dear AMEX Fraud Team,
+
+We are contesting the chargeback for the transaction of INR 6376.92. The cardholder’s address and zip code matched (AVS true), the CVV matched, and the device used was one previously authorized. The delivery was confirmed and the customer has a history of six successful orders with us, indicating familiarity. We have provided a billing proof, proof of service, and a detailed access activity log showing legitimate activity on the device. In our communication with the customer, we confirmed they did not authorize this purchase and have requested a full investigation.
+
+We respectfully request that this evidence be considered and the chargeback reversed.
+
+Thank you for your attention to this matter.
+
+Sincerely,
+Merchant",model,AMEX_FR2,6376.9201958076,True,True,True,True,6
+29,"Dear Card‑Network Team,
+
+We are writing to contest the chargeback claim for transaction #INV2158. The purchase of INR 2158.49 was authorized by the cardholder: AVS matched, device is recognized from prior activity, and delivery was confirmed. The customer’s CVV did not match, but the transaction was captured in our access activity log and we have proof of service showing the product was received. The customer has 17 prior orders with us, indicating an established relationship. We have attached billing proof, access activity log, proof of service, and customer communication to substantiate our position.
+
+We respectfully request the reversal of this chargeback.
+
+Sincerely,
+Merchant Team",model,MC_4840,2158.4890547272744,True,False,True,True,17
+30,"We respectfully contest the chargeback for transaction INR 23771.10 (MC_4837). Our records show the order was placed by a registered customer who has made six prior purchases, indicating familiarity with our service. The delivery was confirmed and the goods were received, as shown in the proof_of_service. Billing proof confirms the cardholder’s billing address matches our database. Access activity logs reveal that the transaction originated from a device previously used by this customer and the AVS/CVV did not fail; the mismatches are due to the card’s updated security settings, not fraud. Customer communication records indicate the customer was notified of the purchase and provided a receipt via email. We believe the claim of an unauthorized transaction is unfounded and request reversal of the chargeback. Thank you for your consideration.",model,MC_4837,23771.10107921712,False,False,False,True,6
+31,"Dear AMEX Fraud Review Team,
+
+We respectfully contest the chargeback for the INR 3941.52 transaction (reason code AMEX_FR2). All authentication checks succeeded: AVS, CVV, device ID, and prior customer activity (15 orders). Shipping records confirm delivery, and our service log shows the item was activated and used on the day of purchase. The customer’s recent trip and atypical account activity were noted, but our records indicate the transaction was authorized by the account holder. We request re‑evaluation of the chargeback in light of the attached evidence.
+
+Sincerely,
+Merchant",model,AMEX_FR2,3941.519494349564,True,True,True,True,15
+32,"Dear Visa Fraud Team,
+
+We are writing to contest the chargeback for transaction INR 4387.21 (code VISA_10_4). The cardholder’s account was authenticated with AVS, CVV, and device recognition, all of which matched our records. The delivery was confirmed, and the customer had 10 prior successful orders from the same device. We have attached a detailed access activity log showing no irregular login attempts, proof of service confirming that the goods were delivered and received, and a copy of the customer’s polite inquiry that acknowledges the charge but asserts that the card was used without authorization by a family member.
+
+Given the strong evidence of legitimate transaction activity and fulfillment, we respectfully request reversal of the chargeback.
+
+Sincerely,
+Merchant",model,VISA_10_4,4387.207884348932,True,True,True,True,10
+33,"We respectfully contest the chargeback for transaction INR 12466.93 (code MC_4840). The purchase was authorized by the cardholder: AVS and CVV matched, device was previously used by the customer, and the customer had placed 10 prior orders with us. We have not shipped any goods or services for this order – delivery/fulfillment is still pending – which explains the absence of fulfillment evidence. Attached we provide: (1) billing proof showing the customer’s authorization and the exact amount; (2) an access activity log confirming the transaction originated from the customer’s recognized device; (3) proof of service detailing the transaction’s intended fulfillment plan; and (4) all customer communications, including the customer’s polite note that they had already contacted their bank. These documents demonstrate a legitimate transaction and that the customer has taken appropriate steps to resolve the matter.
+
+We request reversal of the chargeback in light of the evidence presented.",model,MC_4840,12466.931757339287,True,True,True,False,10
+34,"We respectfully contest the chargeback for the transaction of INR 2769.37. The cardholder’s address and billing details match the customer’s profile (billing_proof). The transaction was made from a device the customer has used for 21 prior orders, confirming legitimate activity (access_activity_log). The purchase was a digital service; delivery was confirmed by system logs and receipt confirmation (proof_of_service). We have communicated with the customer, who acknowledged the transaction in a polite message but expressed uncertainty (customer_communication). All verification checks (AVS, CVV, device recognition) passed. Based on the evidence we request reversal of the chargeback.
+",model,VISA_10_4,2769.370221488575,True,True,True,False,21
+35,"We respectfully contest the chargeback filed under reason code MC_4837 for INR 5424.96. The transaction passed AVS and CVV checks, and the device used was not previously recognized, but the customer had placed five prior orders with us, confirming a legitimate relationship. Delivery was completed and confirmed by the customer’s own signature, as evidenced in our shipping logs. Our billing statement, access activity log, and proof of service confirm that the item was purchased, delivered, and received. The customer’s polite message reporting an unauthorized charge is addressed in the attached customer communication, which shows the customer acknowledges the purchase and has requested a refund rather than a chargeback. These documents collectively demonstrate the legitimacy of the transaction and the customer’s intent. We request the reversal of the chargeback and a return of the funds to our merchant account.
+",model,MC_4837,5424.960635429957,True,True,False,True,5
+36,"Dear Card Network,
+
+We respectfully contest the chargeback for transaction INR 27255.00 (code MC_4837). The cardholder’s address and phone matched our records, and the CVV was verified. The device used was previously linked to this customer, who has placed 20 orders with us without issue. The merchant’s billing proof confirms the service was invoiced and the customer’s payment was captured. Our access activity log shows the order was placed and accessed from the recognized device. We have not confirmed delivery, but our proof of service demonstrates the product was dispatched and a fulfillment notice was generated. We have maintained open communication with the customer, as evidenced by the attached correspondence, and have no record of any dispute or return. We request that this chargeback be reversed in light of the supporting evidence.
+
+Sincerely,
+Merchant",model,MC_4837,27255.004036968712,True,True,True,False,20
+37,"We have investigated the disputed transaction of INR 7863.83 (VISA_10_4). The card’s address, ZIP code and billing details match the AVS records, and the CVV was verified – evidence from billing_proof confirms both. Our access_activity_log shows the transaction originated from a device previously used by this customer and the device is recognized from prior activity. The order was shipped to the correct delivery address and fulfillment was confirmed; proof_of_service demonstrates that the goods were received on the date recorded. The customer’s account has nine prior successful orders, indicating consistent purchasing behavior. Customer communication records show the customer raised the dispute politely and requested an investigation. Based on the combined evidence, we confirm that the transaction was authorized and legitimate, and we respectfully request the chargeback be denied.
+",model,VISA_10_4,7863.8287988327265,True,True,True,True,9
+38,"We respectfully contest the AMEX_FR2 chargeback on the INR 7075.83 transaction. The customer’s card was used by a family member who had previously authorized the merchant. Our access activity log shows that the device used was consistent with prior purchases and the CVV matched. The delivery was confirmed via our proof‑of‑service evidence; the item was received and the customer has no record of non‑receipt. The billing proof confirms the charge was for the agreed service. While the customer raised the dispute, we believe the transaction is legitimate and request reversal of the chargeback. Thank you for your consideration.",model,AMEX_FR2,7075.83437808739,False,True,False,False,6
+39,"Dear Review Team,
+
+We respectfully contest the AMEX_FR2 charge of INR 4883.91. The transaction lacks AVS match, device not recognized, and no delivery confirmation, suggesting fraudulent activity. However, the customer has placed three prior orders with us and the CVV matched. Our access activity log shows the card used in this dispute originates from a device previously authenticated for the customer. Proof of service confirms that the goods were shipped and the customer acknowledged receipt via email. Billing proof documents the merchant’s valid invoice. The customer’s message states they did not authorize the charge, but their prior orders and our records indicate legitimate use.
+
+We request reversal of the chargeback based on the evidence provided.
+
+Sincerely,
+Merchant",model,AMEX_FR2,4883.913789025983,False,True,False,False,3
+40,"Dear Visa, we contest the chargeback for transaction INR 2219.83 (reason code VISA_10_4). The cardholder’s card, device, and address match our records (AVS and CVV verified). The purchase was fulfilled via our verified delivery system, and the customer had made 9 prior orders with us, indicating established trust. The billing address proof confirms the transaction was authorized. Our access logs show the user logged in from a recognized device at the time of purchase. We also have documented communication with the customer confirming their intent to purchase. We respectfully request the reversal of the chargeback and a reinstatement of the transaction.
+
+Thank you for your consideration.
+
+Sincerely,
+Merchant",model,VISA_10_4,2219.8256931715155,True,True,True,True,9
+41,"Dear Card‑Network,
+
+We respectfully contest the chargeback filed under reason code VISA_10_4 for INR 26210.83. The transaction was authorized on a device that has consistently performed successful purchases for this customer, with 16 prior orders on record. The billing address did not match (AVS False) and the CVV was entered (CVV False), yet the customer’s account activity log shows a clear pattern of legitimate use. Delivery was not confirmed; however, the service was rendered—evidenced by our proof_of_service and delivery confirmation that the customer received the goods. We have maintained open communication; the customer’s polite inquiry is documented in our customer_communication file. The customer claims the charge was unauthorized, but the evidence indicates the transaction was legitimate and the customer’s account is active. We request the reversal be dismissed.
+
+Sincerely,
+Merchant",model,VISA_10_4,26210.83464863744,False,False,True,False,16
+42,"Dear Card Network,
+We contest the chargeback for transaction ID X123 on 5 Oct 2024 (INR 4702.75). The cardholder’s account shows 7 prior orders, all successful, and the device used was previously recognized. AVS matched; CVV did not, which is common for online payments. Shipping was confirmed but not delivered at the time of dispute; the merchant supplied proof of service that the package was handed to a courier and a delivery confirmation was logged. Our customer communication shows the buyer acknowledged the order and requested delivery status. The customer’s claim of unfamiliar activity is inconsistent with their purchase history and the evidence of delivery. We request the reversal to be denied.
+Sincerely,
+Merchant",model,MC_4837,4702.750621430751,True,False,True,False,7
+43,"We respectfully contest the chargeback for the transaction of INR 41384.03 (MC_4840). Our records show the card holder’s address (AVS match) and the card was not previously used from the same device, but the customer’s prior orders (four) and the delivered goods are confirmed. The CVV mismatch is noted, yet the delivery was successful, and the customer’s email confirms receipt and satisfaction. Attached is our proof of service, billing proof, access activity log, and copies of the customer communication. These documents substantiate that the purchase was authorized and fulfilled, supporting our position that the chargeback is unwarranted.",model,MC_4840,41384.02508666152,True,False,False,True,4
+44,"Dear Card Network,
+
+We contest the chargeback for transaction 2935.09 INR under reason MC_4837. The payment was authorized with correct card details: AVS and CVV matched, and the cardholder’s device was not recognized as new, indicating prior use. The order was successfully fulfilled and delivery confirmed. We have one prior legitimate order from the same customer, demonstrating typical behaviour.
+
+We provide the following evidence to support our claim:
+1. Billing proof confirming the amount and service details.
+2. Access activity log showing the transaction was placed from an established device.
+3. Proof of service confirming delivery and receipt.
+4. Customer communication indicating the customer did not dispute the charge.
+
+These documents collectively establish that the transaction was authorized and completed, and the refund request is unfounded.
+
+Sincerely,
+Merchant",model,MC_4837,2935.093901497528,True,True,False,True,1

@@ -3633,3 +3633,75 @@ high single digits.
 run will not be repeated with a different seed, to obtain a better number.
 
 **Status:** PRE-REGISTERED. Run follows this commit.
+
+---
+
+## 2026-09-03 — Second pre-registration: why the clean-class false-flag rate is so high
+
+**This is not a re-run of the estimator above.** The n=45 run (previous entry)
+completed and its result stands, published regardless of what follows here —
+43/45 flagged (95.6%), 95% CP CI [0.849, 0.995], decisively missing the 2.3%
+budget. That is not being revisited or improved. This entry pre-registers a
+*different* question, forced by a defect discovered while reading that
+result: `eval/grounding_eval.py::score_item` extracted `gate_flagged` and
+`n_assertions` (a count) from each `GroundingVerdict` and discarded the verdict
+object itself — so the *content* the grader called unsupported was never
+written to disk, only the fact that something was. That made the first run's
+extreme rate impossible to interpret from recorded data (manual reading of
+the 25 flagged letters' *text* found several plausible causes, but none could
+be confirmed against what the grader actually cited). This is a ground-truth
+recording defect, now fixed (`assertions_json`, this session's commit) — the
+second measurement exists to use the fix, not to chase a better headline
+number.
+
+**Question.** For the 27 clean-class items that received a grader verdict in
+the original n=45 run, do the spans the grader cited as unsupported
+correspond to content with no `RECORD_FIELDS` entry?
+
+**Estimator.** Of all assertions the grader marked `"unsupported"` across
+those 27 items, the proportion falling into each of:
+- **(a)** a fact absent from the record entirely — dates, IPs, emails,
+  tracking numbers, named people;
+- **(b)** an evidence-document name (`billing_proof`, `access_activity_log`,
+  `proof_of_service`, `customer_communication`) that `RECORD_FIELDS` does not
+  contain;
+- **(c)** customer communication-log content, which `RECORD_FIELDS` does not
+  contain;
+- **(d)** content that IS in one of the seven record fields — a genuine
+  grader error.
+
+**Only (d) is a false flag.** (a), (b), and (c) are the gate correctly
+following its own narrow schema on content that schema was never given a
+field for — a design gap (recorded separately in the README's Limits
+section, not fixed tonight), not the grader making a mistake.
+
+**Categorization method, disclosed in advance.** (a)-(d) are not mechanical
+labels the way the corpus's contradiction/unrecorded classes are — assigning
+each `"unsupported"` assertion to a bucket is a manual read, done by whoever
+runs the analysis, against the four definitions above. This is stated before
+seeing the assertions, not after, so the categories cannot be shaped to fit
+a preferred outcome.
+
+**n = 27, fixed, not adjustable.** These are exactly the clean-class items
+that received a verdict in the already-completed n=45 run — same seed (0),
+same letters (`data/reference/grounding_letters_seed0_n45.csv`), same
+`grounding_gate_v1` prompt. Only the persistence layer changed
+(`assertions_json`/`failure_reason`, added this session). n cannot be raised
+by drafting more letters or grading more items; the whole point is to
+re-examine what these 27 specific verdicts actually said, not to gather a
+larger sample.
+
+**Published regardless of outcome, including if (d) is large.** If most of
+the 27 items' unsupported assertions turn out to be genuine grader errors on
+content squarely inside the seven fields, that is reported as the finding,
+not softened or re-run.
+
+**Status:** PRE-REGISTERED. Awaiting go-ahead. Blocked pending budget-window
+confirmation — see this session's budget-check note (offline reasoning only,
+no live check performed): the account was still failing the majority of
+grading calls as of 23:20 IST tonight (the end of the n=45 run), and Groq's
+TPD limit behaves as a rolling window, not a fixed daily reset (inferred from
+a variably-sized `retry-after` on an earlier 429, not a documented reset
+clock) — so there is no single confirmable "reset time" to wait for, and no
+zero-cost way to check remaining headroom. Default assumption is NOT reset
+until a live check (which costs a request) says otherwise.

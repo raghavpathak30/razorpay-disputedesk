@@ -227,6 +227,26 @@ it at ₹200) does not depend on this measurement and stands regardless of when
 or whether it runs; the gate's own false-flag rate is a separate, still-open
 question.
 
+**The gate's schema is narrower than the drafter's inputs.** `RECORD_FIELDS`
+(`disputedesk/evidence/grounding.py`) is exactly the seven `DisputeContext`
+fields — `reason_code`, `amount`, `avs_match`, `cvv_match`,
+`device_fingerprint_known`, `delivery_confirmed`, `prior_order_count` — and
+nothing else. But the letter-drafting prompt
+(`disputedesk/evidence/prompts/explanation_letter_v2.txt`) explicitly hands
+the drafting model two things `RECORD_FIELDS` has no entry for: the four
+evidence-document names it is told to cite (`billing_proof`,
+`access_activity_log`, `proof_of_service`, `customer_communication` —
+`disputedesk/evidence/reason_code_map.py`), and the customer's own message
+(`comms_summary`/`comms_tone`, from `normalize_communication_log`). A letter
+that mentions either — which the drafting prompt asks it to do — has no
+record field the grounding gate can cite as support, regardless of whether
+the underlying claim is true. The gate is being asked to audit letters
+against a schema strictly narrower than the inputs the drafter was given.
+Found while diagnosing this session's grounding-gate measurement
+(`DECISIONS.md`'s 2026-09-03 entries). Not fixed here: changing
+`RECORD_FIELDS` changes the gate's behaviour, and that behaviour could not be
+re-verified before the deadline.
+
 ## The LLM authority boundary
 
 The LLM is allowed exactly three jobs (`SPEC.md` §2, amended 2026-09-02;

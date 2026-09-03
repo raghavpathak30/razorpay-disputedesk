@@ -17,6 +17,7 @@ a script run recorded in DECISIONS.md, per CLAUDE.md's no-network-in-tests
 rule.
 """
 
+import json
 import time
 from dataclasses import dataclass
 
@@ -45,6 +46,20 @@ class ItemScore:
     baseline_flagged: bool
     gate_failed: bool  # the gate could not reach a verdict (counts as flagged)
     n_assertions: int
+    # The full verdict, not just its count - added 2026-09-03 after a live
+    # n=45 run's false-flag rate turned out uninterpretable: `n_assertions`
+    # alone cannot say *what* the grader found unsupported, so a second,
+    # cheaper measurement (why is the rate so high) needed a full re-grade
+    # that should not have been necessary. JSON text, not a nested column,
+    # so this round-trips through `to_csv`/`read_csv` unchanged - a list
+    # column does not. `"[]"` for an item with no verdict (gate_failed=True),
+    # matching `n_assertions=0` for the same case.
+    assertions_json: str
+    # Why the grader has no verdict, or `None` when it does - carried for the
+    # same reason: `gate_failed=True` alone cannot distinguish "the API call
+    # failed" from "the response twice failed schema validation", and that
+    # distinction is exactly what a budget-exhaustion post-mortem needs.
+    failure_reason: str | None
 
 
 class _GradeableText:
@@ -69,6 +84,20 @@ class _GradeableText:
         self.letter_text = letter_text
 
 
+def _assertions_json(verdict) -> str:
+    """`verdict.assertions` serialised as JSON text - `"[]"` when there is no
+    verdict, so this and `n_assertions=0` always agree on the no-verdict
+    case rather than one being a list and the other a sentinel."""
+    if verdict is None:
+        return "[]"
+    return json.dumps(
+        [
+            {"quote": a.quote, "supporting_field": a.supporting_field, "verdict": a.verdict}
+            for a in verdict.assertions
+        ]
+    )
+
+
 def score_item(item: CorpusItem, llm_client: LLMClient) -> ItemScore:
     verdict, failure = grade_letter(_GradeableText(item.letter_text), item.context, llm_client)
     # A gate that cannot reach a verdict withholds the letter, so for scoring
@@ -83,6 +112,8 @@ def score_item(item: CorpusItem, llm_client: LLMClient) -> ItemScore:
         baseline_flagged=baseline_flags(item.letter_text, item.context),
         gate_failed=failure is not None,
         n_assertions=0 if verdict is None else len(verdict.assertions),
+        assertions_json=_assertions_json(verdict),
+        failure_reason=failure,
     )
 
 

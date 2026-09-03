@@ -203,3 +203,9 @@ class TestClopperPearson:
         w = wilson(2, 45, "wilson")
         assert cp.ci_low <= w.ci_low
         assert cp.ci_high >= w.ci_high
+
+    def test_str_labels_itself_clopper_pearson_not_wilson(self):
+        """Rate.__str__ must not mislabel a Clopper-Pearson interval as
+        Wilson - both functions build the same Rate class."""
+        assert "Clopper-Pearson CI" in str(clopper_pearson(6, 120, "cp"))
+        assert "Wilson CI" in str(wilson(6, 120, "w"))
