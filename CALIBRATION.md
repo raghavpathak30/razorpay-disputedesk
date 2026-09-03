@@ -17,6 +17,15 @@ outside a published range, that is recorded as a limit and left alone —
 CLAUDE.md rule 5 ("do not touch the generator to make a number move") and the
 session's standing rules apply here exactly as they do everywhere else.
 
+**Summary.** Of the 7 parameters listed, 5 have a checkable published
+real-world analogue (rows 2–5, 7). Of those 5: 3 fall inside the cited
+numeric range (representment win rate, per-dispute contest cost, analyst time
+cost), 1 falls outside (friendly-fraud share), and 1 (reason-code mix) has a
+qualitative published analogue but no quantitative range to be scored
+inside/outside of, so it is recorded as a known simplification instead. The
+remaining 2 (chargeback base rate, VAMP/ECM threshold) are not modeled in
+this system at all and are listed for completeness, not scored.
+
 ---
 
 ## 1. Chargeback base rate
@@ -33,11 +42,11 @@ session's standing rules apply here exactly as they do everywhere else.
 
 | | |
 |---|---|
-| **Generator value** | `true_fraud_rate_month0 = 0.40`, `true_fraud_rate_month_last = 0.50` (`disputedesk/generator/config.py`). `true_fraud=0` ("friendly fraud" per `GENERATOR.md` L1) is therefore **50%–60%** of the dispute population, drifting from 60% down to 50% across the 24-month simulation window as the true-fraud rate rises. |
-| **Published range** | 19–20% (Javelin/Visa, denominator: fraud-coded disputes only) up to 43.8% (Chargebacks911 2026 merchant survey, denominator: all chargebacks, not just fraud-coded ones). Both ends reported per the instruction not to collapse to one number — the gap between them is a denominator difference (fraud-coded disputes vs. all chargebacks), not disagreement about the same quantity. |
+| **Generator value** | `true_fraud_rate_month0 = 0.40`, `true_fraud_rate_month_last = 0.50` (`disputedesk/generator/config.py`). **Direction checked, not inverted:** `disputedesk/generator/latents.py:55-58` computes `fraud_rate` from these two fields and draws `true_fraud = rng.random(n) < fraud_rate` — so `true_fraud_rate_month0/last` parametrizes `P(true_fraud=1)`, the share of **genuine third-party fraud**, directly (`GENERATOR.md` L1: `true_fraud=1` means "the actual cardholder didn't make the charge"). Friendly fraud is the complement, `true_fraud=0`, so friendly-fraud share = 1 − fraud_rate = **50%–60%** of the dispute population (60% at month 0, drifting to 50% at the window's end, as the genuine-fraud rate rises from 40% to 50%). |
+| **Published range** | 19–20% (Javelin/Visa, denominator: **fraud-coded disputes only**) vs. 43.8% (Chargebacks911 2026 merchant survey, denominator: **all chargebacks**, not just fraud-coded ones). Both ends reported, not collapsed to one number — the gap is a denominator difference. **Which denominator applies here:** this generator's population is fraud-coded disputes only — all four `reason_codes` (`MC_4837`, `MC_4840`, `VISA_10_4`, `AMEX_FR2`) are fraud reason codes, and CLAUDE.md scopes the whole project to "fraud-reason-code chargebacks." So the Javelin/Visa 19–20% figure (same denominator: fraud-coded disputes) is the apples-to-apples comparison; the Chargebacks911 43.8% (all chargebacks, a broader population that includes non-fraud codes like 13.1/13.2 this generator never produces) is reported for completeness but is not the matched comparison. |
 | **Source** | Javelin/Visa [regulator/network] (fraud-coded disputes); Chargebacks911 2026 merchant survey [vendor] (all chargebacks). |
 | **Date** | Javelin/Visa: not dated in the source material available; Chargebacks911: 2026. |
-| **Inside or outside** | **OUTSIDE.** The generator's 50–60% friendly-fraud share sits above even the upper end of the published range (43.8%). This is a real gap, not a rounding difference — the generator's dispute population skews more toward friendly fraud than the highest cited merchant-survey estimate. `GENERATOR.md`'s own §5 justification (E[p]≈0.25 sitting ~8 points above a commonly-cited ~17% blended win-rate anchor, see row 3 below) is a related but separate claim about win probability, not about the friendly-fraud share itself — it does not resolve this gap. Recorded as-is; the generator was not adjusted to close it. |
+| **Inside or outside** | **OUTSIDE against both denominators**, but by very different margins. Against the matched denominator (Javelin/Visa, 19–20%, fraud-coded disputes), the generator's 50–60% is dramatically outside — roughly 2.5–3x the published ceiling. Against the broader, less-matched denominator (Chargebacks911, 43.8%, all chargebacks), it is only narrowly outside (50% vs. 43.8% at the window's low end). Recorded as outside either way; the generator was not adjusted to close the gap. `GENERATOR.md`'s own §5 justification (E[p]≈0.25 sitting ~8 points above a commonly-cited ~17% blended win-rate anchor, see row 3 below) is a related but separate claim about win probability, not about friendly-fraud share — it does not resolve this gap. |
 
 ## 3. Representment / contest win rate
 
@@ -84,10 +93,10 @@ session's standing rules apply here exactly as they do everywhere else.
 | | |
 |---|---|
 | **Generator value** | Uniform draw over four codes — `MC_4837`, `MC_4840`, `VISA_10_4`, `AMEX_FR2` (`disputedesk/generator/config.py: reason_codes`, drawn via `rng.choice` with no weighting in `disputedesk/generator/latents.py:144` — confirmed by reading the call site, no `p=` argument is passed). Each code ≈25% of records by construction. |
-| **Published range** | None — qualitative only. Real-world code pairings are described by category, not by a public quantitative distribution: 10.4+13.1 for physical eCommerce, 10.4+13.2 for SaaS/digital goods. |
-| **Source** | Card network reason-code documentation [regulator/network] (qualitative category pairing only; no vendor or academic source publishes a quantitative mix). |
-| **Date** | Not applicable — no dated quantitative source exists. |
-| **Inside or outside** | **N/A — no published quantitative distribution exists to be inside or outside of.** This is stated explicitly per instruction, not left silent: the generator's uniform 25%/25%/25%/25% split is a modeling choice, not a fit to any published figure, because no such figure exists. |
+| **Published range** | None quantitative. Qualitative evidence (PaymentBrief 2026) indicates reason-code prevalence is *not* uniform in practice: 10.4 (card-absent fraud, closest real-world analogue to this generator's `VISA_10_4`) dominates paired with 13.1 (merchandise/services not received) in physical eCommerce portfolios, and paired with 13.2 (services not as described / canceled recurring) in SaaS/digital-goods portfolios. No source quantifies the exact split. |
+| **Source** | PaymentBrief 2026 [vendor] (qualitative category pairing only — no vendor or academic source publishes a quantitative mix). |
+| **Date** | 2026. |
+| **Inside or outside** | **Not scored — recorded as a known simplification, not as unknowable.** There is no quantitative target to be inside or outside of, so "inside/outside" does not apply. But the qualitative evidence is directly relevant: it indicates real-world reason-code prevalence skews toward whichever fraud code most commonly co-occurs with the dominant non-fraud code in a given vertical (10.4-led combinations dominate both cited verticals), which this generator's uniform 25%/25%/25%/25% draw across `MC_4837`/`MC_4840`/`VISA_10_4`/`AMEX_FR2` does not reflect. Uniform is therefore a **deliberate simplification known to be unrepresentative** of the real mix, not a defensible best estimate in the absence of data — recorded as such. |
 
 ---
 
@@ -99,9 +108,15 @@ Of the parameters above with an actual generator analogue to check (rows 2–5,
 - **Inside published range:** representment/contest win rate (row 3), per-dispute
   contest cost (row 4).
 - **Plausible, not a strict range comparison:** analyst time cost (row 5).
-- **Outside published range:** friendly-fraud share (row 2) — the generator's
-  50–60% sits above the highest cited published figure (43.8%).
-- **No published quantitative benchmark exists:** reason-code mix (row 7).
+- **Outside published range:** friendly-fraud share (row 2) — direction verified
+  against `disputedesk/generator/latents.py:55-58` (not inverted); the generator's
+  50–60% is dramatically outside the matched fraud-coded-disputes denominator
+  (19–20%, Javelin/Visa) and narrowly outside the broader all-chargebacks
+  denominator (43.8%, Chargebacks911).
+- **Known simplification, not scored:** reason-code mix (row 7) — no quantitative
+  benchmark exists, but qualitative evidence (PaymentBrief 2026) indicates the
+  real-world mix is not uniform, so the generator's uniform 25%/25%/25%/25% draw
+  is recorded as a deliberate, known-unrepresentative simplification.
 - **No generator analogue exists:** chargeback base rate (row 1), VAMP/ECM
   threshold (row 6).
 
