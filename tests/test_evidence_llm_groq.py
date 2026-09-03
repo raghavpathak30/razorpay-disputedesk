@@ -102,9 +102,7 @@ def test_records_usage_including_reasoning_tokens(monkeypatch):
     handler = httpx.MockTransport(
         lambda request: httpx.Response(
             200,
-            json=_response_with_usage(
-                prompt_tokens=377, completion_tokens=581, reasoning_tokens=5
-            ),
+            json=_response_with_usage(prompt_tokens=377, completion_tokens=581, reasoning_tokens=5),
         )
     )
     _patch_post(monkeypatch, handler)
@@ -119,9 +117,7 @@ def test_records_usage_including_reasoning_tokens(monkeypatch):
 
 def test_records_usage_with_missing_reasoning_tokens_field_as_none(monkeypatch):
     handler = httpx.MockTransport(
-        lambda request: httpx.Response(
-            200, json=_response_with_usage(reasoning_tokens=None)
-        )
+        lambda request: httpx.Response(200, json=_response_with_usage(reasoning_tokens=None))
     )
     _patch_post(monkeypatch, handler)
     client = GroqHttpLLMClient()

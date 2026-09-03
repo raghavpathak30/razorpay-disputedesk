@@ -40,7 +40,7 @@ def test_at_cost_zero_the_policy_and_baseline_a_nearly_coincide():
     # matters when the *decision itself* differs, not the escalate credit).
     _per_seed, summary = _run()
     zero_cost_row = summary[summary["representment_cost_inr"] == 0.0].iloc[0]
-    relative_gap = abs(zero_cost_row["policy_advantage_median"]) / max(
+    relative_gap = abs(zero_cost_row["advantage_paired_mean"]) / max(
         abs(zero_cost_row["baseline_a_median"]), 1.0
     )
     assert relative_gap < 0.05
@@ -52,7 +52,7 @@ def test_policy_advantage_is_non_negative_at_a_high_cost():
     # policy accepts most of them - the policy should not do worse.
     _per_seed, summary = _run()
     high_cost_row = summary[summary["representment_cost_inr"] == 5000.0].iloc[0]
-    assert high_cost_row["policy_advantage_median"] >= 0
+    assert high_cost_row["advantage_paired_mean"] >= 0
 
 
 def test_baseline_a_recovered_is_non_increasing_in_cost():

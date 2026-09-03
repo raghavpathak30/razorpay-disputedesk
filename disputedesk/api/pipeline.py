@@ -23,13 +23,20 @@ from disputedesk.audit.models import ApiOutcome, DecisionRecord
 from disputedesk.client.razorpay import RazorpayClient
 from disputedesk.evidence.assembler import assemble_evidence_packet
 from disputedesk.evidence.context import DisputeContext
+from disputedesk.evidence.documents import EvidenceDocument
+from disputedesk.evidence.draft_letter import PROMPT_VERSION as _LETTER_PROMPT_VERSION
+from disputedesk.evidence.grounding import PROMPT_VERSION as _GROUNDING_PROMPT_VERSION
+from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
 from disputedesk.evidence.llm import LLMClient
+from disputedesk.evidence.published_reason_codes import is_supported_reason_code
 from disputedesk.features.build import build_features
 from disputedesk.model.predict import predict_proba
 from disputedesk.policy.config import PolicyConfig
 from disputedesk.policy.engine import Decision, PolicyDecision, decide
 
-_PROMPT_VERSIONS_FOR_CONTEST = "normalize_comms_log_v1,explanation_letter_v1"
+_PROMPT_VERSIONS_FOR_CONTEST = (
+    f"normalize_comms_log_v1,{_LETTER_PROMPT_VERSION},{_GROUNDING_PROMPT_VERSION}"
+)
 
 
 @dataclass(frozen=True)
@@ -96,20 +103,65 @@ class _EvidenceOutcome:
     prompt_version: str | None
     validation_result: str
     human_review_required: bool
-    letter_text: str | None
+    # The letter object, not its text: `_file_if_needed` needs its
+    # `provenance` to decide whether it may be filed at all (defect 0.1).
+    letter: DraftedLetter | None
+    # The rendered documents to upload, or None when nothing was assembled
+    # (no evidence strategy for this reason code) or rendering failed
+    # (2026-09-04 reopening, defect 0.4). `_file_if_needed` withholds a
+    # contest whose bundle is None or empty before it ever reaches the
+    # client - the same fail-closed shape the letter provenance check
+    # already has.
+    evidence_bundle: tuple[EvidenceDocument, ...] | None
 
 
 _NO_EVIDENCE = _EvidenceOutcome(
     prompt_version=None,
     validation_result="not_applicable",
     human_review_required=False,
-    letter_text=None,
+    letter=None,
+    evidence_bundle=None,
 )
+
+# The documented fallback for a reason code this system has no evidence
+# strategy for (2026-09-02, defect 0.3): the event is accepted, a full audit
+# row is written with this tag on it, and the dispute is queued for a person.
+# Nothing is filed in either direction - see `_file_if_needed`.
+_UNRECOGNISED_REASON_CODE = _EvidenceOutcome(
+    prompt_version=None,
+    validation_result="reason_code_unrecognised",
+    human_review_required=True,
+    letter=None,
+    evidence_bundle=None,
+)
+
+
+def _validation_result_for(packet) -> str:
+    """What the audit row records about how the evidence packet turned out.
+
+    Three outcomes, kept distinct because they mean different things to the
+    person who picks the dispute out of the review queue: the letter was
+    drafted and grounded; the letter was drafted but the grounding gate
+    withheld it (`disputedesk/evidence/grounding.py`); or drafting itself
+    failed and the deterministic template stood in.
+    """
+    letter = packet.explanation_letter
+    if letter.provenance is LetterProvenance.FAILED_GROUNDING:
+        return "grounding_gate_withheld"
+    if packet.human_review_required:
+        return "fallback_template_used"
+    return "validated"
 
 
 def _assemble_evidence_if_contesting(
     entity: DisputeEntity, policy_decision: PolicyDecision, llm_client: LLMClient
 ) -> _EvidenceOutcome:
+    if not is_supported_reason_code(entity.reason_code):
+        # Checked before the branch test, not after: an unrecognised code
+        # stops the dispute regardless of what the policy engine decided,
+        # including an ACCEPT, because accepting is irreversible and this
+        # system does not know what it is accepting.
+        return _UNRECOGNISED_REASON_CODE
     if policy_decision.decision != Decision.CONTEST:
         return _NO_EVIDENCE
 
@@ -117,9 +169,10 @@ def _assemble_evidence_if_contesting(
     packet = assemble_evidence_packet(context, entity.customer_communication_log, llm_client)
     return _EvidenceOutcome(
         prompt_version=_PROMPT_VERSIONS_FOR_CONTEST,
-        validation_result="fallback_template_used" if packet.human_review_required else "validated",
+        validation_result=_validation_result_for(packet),
         human_review_required=packet.human_review_required,
-        letter_text=packet.explanation_letter.letter_text,
+        letter=packet.explanation_letter,
+        evidence_bundle=packet.evidence_bundle,
     )
 
 
@@ -188,7 +241,7 @@ def process_dispute_event(
         return _already_processed_result(session, decision_row)
 
     api_outcome = _file_if_needed(
-        session, razorpay_client, dispute_id, policy_decision, entity.amount, evidence.letter_text
+        session, razorpay_client, dispute_id, policy_decision, entity.amount, evidence
     )
 
     return ProcessResult(
@@ -206,13 +259,78 @@ def _file_if_needed(
     dispute_id: str,
     policy_decision: PolicyDecision,
     amount_inr: float,
-    letter_text: str | None,
+    evidence: _EvidenceOutcome,
 ) -> ApiOutcome | None:
-    if policy_decision.decision == Decision.CONTEST:
-        return _file(session, razorpay_client, dispute_id, "contest", amount_inr, letter_text)
-    if policy_decision.decision == Decision.ACCEPT:
-        return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None)
-    return None  # ESCALATE: no API call - a human decides. Nothing to file yet.
+    action = _ACTION_BY_BRANCH.get(policy_decision.decision)
+    if action is None:
+        return None  # ESCALATE: no API call - a human decides. Nothing to file yet.
+
+    if evidence.validation_result == "reason_code_unrecognised":
+        return _withhold_for_review(
+            session,
+            dispute_id,
+            action,
+            "reason code is not one this system has an evidence strategy for",
+        )
+
+    if action == "contest":
+        letter = evidence.letter
+        if letter is None or not letter.submittable:
+            provenance = letter.provenance.value if letter is not None else "missing"
+            return _withhold_for_review(
+                session,
+                dispute_id,
+                action,
+                f"explanation letter provenance is {provenance!r}, not 'model'",
+            )
+        if not evidence.evidence_bundle:
+            # Razorpay's contest endpoint requires at least one document id
+            # under action="submit" (2026-09-04 reopening, defect 0.4) - a
+            # letter alone is not fileable, regardless of its provenance.
+            return _withhold_for_review(
+                session,
+                dispute_id,
+                action,
+                "evidence bundle is empty or failed to render; no document to attach",
+            )
+        return _file(
+            session,
+            razorpay_client,
+            dispute_id,
+            "contest",
+            amount_inr,
+            letter,
+            evidence.evidence_bundle,
+        )
+
+    return _file(session, razorpay_client, dispute_id, "accept", amount_inr, None, None)
+
+
+_ACTION_BY_BRANCH = {Decision.CONTEST: "contest", Decision.ACCEPT: "accept"}
+
+
+def _withhold_for_review(session: Session, dispute_id: str, action: str, reason: str) -> ApiOutcome:
+    """The policy engine reached a decision, but the packet is not fit to act
+    on unsupervised - the letter is not the model's own validated output
+    (defect 0.1), or the reason code is one this system has no strategy for
+    (defect 0.3). Nothing is filed and no network call is made; the dispute is
+    recorded as awaiting a person.
+
+    Deliberately *not* re-decided as accept: accepting is irreversible
+    (Razorpay's accept endpoint moves the dispute straight to "lost"), and
+    neither a drafting failure nor an unknown reason code is evidence about
+    whether this dispute is winnable. The policy branch on the decision row
+    still reads what the policy engine decided - what changed is that the
+    packet was not fit to file, which is a separate fact and is recorded as
+    one. `action` records which filing was withheld.
+    """
+    return record_api_outcome(
+        session,
+        dispute_id=dispute_id,
+        action=action,
+        outcome="withheld_for_review",
+        error=f"{reason}; queued for human review instead of being filed",
+    )
 
 
 def _file(
@@ -221,21 +339,27 @@ def _file(
     dispute_id: str,
     action: str,
     amount_inr: float,
-    summary: str | None,
+    letter: DraftedLetter | None,
+    evidence_bundle: tuple[EvidenceDocument, ...] | None,
 ) -> ApiOutcome:
     """Call the Razorpay client for `action` (retry/backoff on timeout or
     429 already happens inside the client - see
     `disputedesk/client/razorpay.py`) and record exactly one outcome row,
     success or failure. SPEC.md §7 failure path 1: if every retry inside the
-    client is exhausted, the exception is caught here, not left to crash the
-    request - the system degrades to a "failed" audit row a human can act
-    on, and a later replay of the same webhook event is still safe (the
+    client is exhausted, or a document upload fails or returns no id
+    (2026-09-04 reopening), the exception is caught here, not left to crash
+    the request - the system degrades to a "failed" audit row a human can
+    act on, and a later replay of the same webhook event is still safe (the
     `api_outcomes` UNIQUE constraint means a retry-by-replay can only ever
-    produce this same row again, never a second filing).
+    produce this same row again, never a second filing or a second set of
+    uploads).
     """
     try:
         if action == "contest":
-            response = razorpay_client.contest(dispute_id, amount_inr, summary or "")
+            # `letter` is non-None and submittable, and `evidence_bundle` is
+            # non-empty, here - `_file_if_needed` withholds anything else
+            # before reaching this function.
+            response = razorpay_client.contest(dispute_id, amount_inr, letter, evidence_bundle)
         else:
             response = razorpay_client.accept(dispute_id)
     except Exception as error:  # noqa: BLE001 - genuinely any failure must degrade, not crash

@@ -42,6 +42,27 @@ REQUIRED_EVIDENCE_BY_REASON_CODE: dict[str, tuple[str, ...]] = {
 
 assert set(REQUIRED_EVIDENCE_BY_REASON_CODE) == set(REASON_CODES)
 
+LEGACY_WIRE_ALIASES: dict[str, str] = {
+    # Visa retired standalone reason code 83 in 2018 under Visa Claims
+    # Resolution, reclassifying card-absent fraud into the 10.x conditions;
+    # 10.4 "Other Fraud - Card-Absent Environment" is the current equivalent
+    # and is the key used above. Razorpay's published reference has not been
+    # updated and still lists 83 (re-checked 2026-09-02), so a payload sourced
+    # from that reference will carry the retired code for a dispute this
+    # system *does* handle. Mapping it forward is not a guess: it is the same
+    # dispute condition under its current name. See GENERATOR.md §8 and
+    # DECISIONS.md's 2026-09-01 "Visa reason code rename" entry.
+    "VISA_83": "VISA_10_4",
+}
+
+
+def canonical_reason_code(reason_code: str) -> str:
+    """Map a retired published code onto the current condition this system
+    keys on. Every other code is returned unchanged - this is a rename table,
+    not a normaliser, and it must never guess.
+    """
+    return LEGACY_WIRE_ALIASES.get(reason_code, reason_code)
+
 
 def required_evidence_types(reason_code: str) -> tuple[str, ...]:
     """The evidence object types a contest packet for this `reason_code` must
@@ -50,5 +71,11 @@ def required_evidence_types(reason_code: str) -> tuple[str, ...]:
     category at inference time), assembling evidence for a reason code this
     system has no defense strategy for is a configuration error, not a
     runtime input to tolerate silently.
+
+    Callers reached here only after `is_supported_reason_code`
+    (`disputedesk/evidence/published_reason_codes.py`) said yes - since
+    2026-09-02 the webhook no longer rejects an unknown code at the boundary,
+    so this `KeyError` is a genuine last-resort guard rather than the thing
+    standing between an unknown code and a crash.
     """
-    return REQUIRED_EVIDENCE_BY_REASON_CODE[reason_code]
+    return REQUIRED_EVIDENCE_BY_REASON_CODE[canonical_reason_code(reason_code)]

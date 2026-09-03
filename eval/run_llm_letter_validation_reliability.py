@@ -74,9 +74,7 @@ def _run_for_event(
     entity = event["payload"]["dispute"]["entity"]
     context = _context_from_entity(entity)
     evidence_types = required_evidence_types(context.reason_code)
-    normalize_result = normalize_communication_log(
-        entity["customer_communication_log"], llm_client
-    )
+    normalize_result = normalize_communication_log(entity["customer_communication_log"], llm_client)
     draft_usage_start = len(llm_client.usage_log)
     records = run_letter_reliability_sample(
         context, evidence_types, normalize_result.normalized, llm_client, n_runs, sleep_seconds

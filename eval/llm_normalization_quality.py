@@ -1,8 +1,5 @@
 """Measures how well the LLM's `customer_communication_log` normalisation
-(SPEC.md §2) recovers `true_fraud`, against the TF-IDF + logistic regression
-baseline recorded in DECISIONS.md's 2026-08-31 "Generator calibration" entry
-(AUC 0.6371, 5-fold CV) - the bar this project's own notes name as what the
-LLM path should measurably beat.
+(SPEC.md §2) recovers `true_fraud`.
 
 Feature extraction, evaluation methodology (logistic regression, 5-fold
 stratified CV, ROC AUC), and the fixed `random_state` below are frozen
@@ -17,6 +14,16 @@ network-touching `run_llm_normalization_sample` is tested only with
 `FakeLLMClient` (CLAUDE.md: no test may make a network call) - the real
 measurement against the live API is a one-off script run, recorded in
 DECISIONS.md, not a repeatable automated test.
+
+Was compared against a hardcoded `TFIDF_BASELINE_AUC = 0.6371` here, cited
+from DECISIONS.md's 2026-08-31 "Generator calibration" entry. That comparison
+- an unpaired point estimate against a baseline measured at a different,
+unrecorded sample size - is the defect `DECISIONS.md`'s 2026-09-02 "TF-IDF
+baseline had no code" entry corrects (stale-number audit, 2026-09-03). The
+constant is removed rather than left to be cited again by accident: the
+correct comparison lives in `eval.run_llm_normalization_quality.
+paired_comparison_against_tfidf`, which computes the TF-IDF baseline fresh, on
+the same items the LLM arm was just scored on, every time.
 """
 
 import time
@@ -33,12 +40,6 @@ from disputedesk.evidence.normalize_comms import NormalizationResult, normalize_
 from disputedesk.evidence.schemas import NormalizedCommunicationLog
 from disputedesk.generator.config import GeneratorConfig
 from disputedesk.generator.pipeline import generate_dataset
-
-# Recorded in DECISIONS.md, 2026-08-31 "Generator calibration": TF-IDF +
-# logistic regression on the same `customer_communication_log` ->
-# `true_fraud` task, 5-fold CV. The baseline this measurement compares
-# against - never recomputed here, only cited.
-TFIDF_BASELINE_AUC: float = 0.6371
 
 FEATURE_COLUMNS: tuple[str, ...] = (
     "claims_unauthorized_transaction",

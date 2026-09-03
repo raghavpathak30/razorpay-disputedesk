@@ -1,12 +1,17 @@
 """Drafting `explanation_letter` (SPEC.md §2, §3): happy path validates
 directly, repeated LLM failure degrades to a deterministic template letter
-with `human_review_required=True` (SPEC.md §7 failure path 2).
+(SPEC.md §7 failure path 2). Since 2026-09-02 the drafter returns a
+`DraftedLetter` carrying its own `provenance` rather than a letter plus a
+separate `human_review_required` boolean - the provenance *is* the review
+flag, and it is what gates submission. The provenance/submission invariants
+themselves are pinned in `tests/test_evidence_letter_provenance.py`.
 """
 
 import json
 
 from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.draft_letter import draft_explanation_letter
+from disputedesk.evidence.letter import LetterProvenance
 from disputedesk.evidence.llm import FakeLLMClient
 from disputedesk.evidence.schemas import NormalizedCommunicationLog
 
@@ -39,28 +44,28 @@ VALID_LETTER_RESPONSE = json.dumps(
 
 def test_valid_llm_response_is_used_directly():
     client = FakeLLMClient(responses=[VALID_LETTER_RESPONSE])
-    result = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
+    letter = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
 
-    assert result.human_review_required is False
-    assert result.letter.letter_text == "x" * 80
+    assert letter.provenance is LetterProvenance.MODEL
+    assert letter.letter_text == "x" * 80
 
 
 def test_repair_succeeds_after_one_bad_response():
     client = FakeLLMClient(responses=["not json", VALID_LETTER_RESPONSE])
-    result = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
+    letter = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
 
-    assert result.human_review_required is False
+    assert letter.provenance is LetterProvenance.MODEL
     assert client.call_count == 2
 
 
 def test_falls_back_to_deterministic_template_after_two_bad_responses():
     client = FakeLLMClient(responses=["not json", "still not json"])
-    result = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
+    letter = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
 
-    assert result.human_review_required is True
-    assert "VISA_10_4" in result.letter.letter_text
-    assert "5000.00" in result.letter.letter_text
-    assert list(result.letter.cites_evidence_types) == list(EVIDENCE_TYPES)
+    assert letter.provenance is LetterProvenance.FALLBACK
+    assert "VISA_10_4" in letter.letter_text
+    assert "5000.00" in letter.letter_text
+    assert list(letter.cites_evidence_types) == list(EVIDENCE_TYPES)
 
 
 def test_fallback_never_claims_the_amount_or_reason_code_are_anything_but_given():
@@ -74,8 +79,8 @@ def test_fallback_never_claims_the_amount_or_reason_code_are_anything_but_given(
         delivery_confirmed=False,
         prior_order_count=0,
     )
-    result = draft_explanation_letter(context, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
+    letter = draft_explanation_letter(context, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
 
-    assert "MC_4837" in result.letter.letter_text
-    assert "999.50" in result.letter.letter_text
-    assert "no" in result.letter.letter_text
+    assert "MC_4837" in letter.letter_text
+    assert "999.50" in letter.letter_text
+    assert "no" in letter.letter_text

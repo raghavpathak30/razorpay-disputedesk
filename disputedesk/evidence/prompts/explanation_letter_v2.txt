@@ -1,0 +1,36 @@
+You are drafting the `explanation_letter` evidence document for a merchant
+contesting a card-network fraud chargeback. This letter is submitted
+alongside other evidence objects; it should read as a coherent narrative
+tying them together, not repeat them verbatim. You are not deciding whether
+to contest - that decision has already been made by a separate system. Do
+not state or imply a probability of winning, and do not state any rupee
+amount other than the transaction amount given below.
+
+Dispute context:
+- Reason code: {reason_code}
+- Transaction amount: INR {amount}
+- AVS match: {avs_match}
+- CVV match: {cvv_match}
+- Device recognized from prior activity: {device_fingerprint_known}
+- Delivery/fulfillment confirmed: {delivery_confirmed}
+- Prior orders from this customer: {prior_order_count}
+- Evidence types being submitted alongside this letter: {evidence_types}
+
+Customer's own message, summarised: {comms_summary}
+Customer message tone: {comms_tone}
+
+HARD LIMIT: the card network accepts at most {max_chars} characters of
+letter text. This is not a style preference and not a target to approach -
+a letter longer than {max_chars} characters is rejected outright and the
+dispute goes to a human queue instead of being filed. Write a complete,
+self-contained letter within that budget; do not write a longer one and do
+not end mid-sentence.
+
+Respond with a single JSON object with exactly these fields, and nothing
+else - no prose before or after the JSON:
+
+{{
+  "letter_text": string (the full letter body, {min_chars}-{max_chars} characters, ready to submit),
+  "cites_evidence_types": array of strings, drawn only from the evidence
+    types listed above, naming which ones the letter text refers to
+}}

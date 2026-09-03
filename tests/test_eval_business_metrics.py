@@ -3,6 +3,7 @@ decision path, both baselines, and FP/FN cost accounting.
 """
 
 import numpy as np
+import pytest
 
 from disputedesk.policy.config import PolicyConfig
 from disputedesk.policy.engine import Decision
@@ -133,7 +134,7 @@ def test_escalated_amount_share_is_fraction_of_total_holdout_rupees():
     decisions = np.array([Decision.ESCALATE, Decision.CONTEST, Decision.ACCEPT], dtype=object)
     amount = np.array([2000.0, 3000.0, 5000.0])
     share = escalated_amount_share(decisions, amount)
-    assert share == 2000.0 / 10000.0
+    assert share == 0.2
 
 
 def test_escalated_amount_share_can_exceed_the_escalated_count_share():
@@ -145,15 +146,29 @@ def test_escalated_amount_share_can_exceed_the_escalated_count_share():
     )
     amount = np.array([4000.0, 4000.0, 500.0, 500.0, 1000.0])
     share = escalated_amount_share(decisions, amount)
-    assert share == 8000.0 / 10000.0
+    assert share == 0.8
 
 
-def test_build_business_row_is_internally_consistent_on_a_hand_built_set():
-    # Four disputes, hand-chosen so each decision path fires once:
-    #   p_win=0.9 -> contest, won=True  -> recovered = amount - cost
-    #   p_win=0.1 -> contest? no: EV = 0.1*2000-400 = -200 -> accept, won=False (true negative)
-    #   p_win=0.9 -> contest, won=False -> recovered = -cost (a false positive)
-    #   p_win=0.5 -> escalate (band), won=True (a "would-be" false negative if forced to accept)
+def test_build_business_row_matches_hand_computed_constants():
+    """Four disputes, hand-chosen so each decision path fires once. Every
+    expected value below is a **literal**, worked out on paper from SPEC.md §4
+    and §6, not an expression that restates the implementation.
+
+    Corrected 2026-09-02 (remediation defect 2.2). The previous version of this
+    test computed its expected baseline-A figure by calling
+    `contest_everything_recovered` - the same production function it was
+    checking - so it asserted only that `build_business_row` calls that
+    function. Verified by mutation: making `contest_everything_recovered`
+    ignore the representment cost entirely left the old test passing.
+
+    The worked case, cost = 400, band = (0.45, 0.55):
+
+      row  p_win  amount  won    EV = p*amt-400   decision   recovered
+      0    0.9    5000    True   +4100            contest    5000-400 = +4600
+      1    0.1    2000    False   -200            accept                  0
+      2    0.9    3000    False  +2300            contest         -400 = -400
+      3    0.5    4000    True   (in band)        escalate   by mode, below
+    """
     config = PolicyConfig(representment_cost_inr=COST, low_confidence_band=(0.45, 0.55))
     p_win = np.array([0.9, 0.1, 0.9, 0.5])
     won = np.array([True, False, False, True])
@@ -162,29 +177,42 @@ def test_build_business_row_is_internally_consistent_on_a_hand_built_set():
     row = build_business_row(p_win, won, amount, config)
 
     assert row["n"] == 4
-    # zero mode: escalated row (index 3, won=True) credited 0.
-    expected_total_recovered_zero = (5000.0 - COST) + 0.0 + (-COST) + 0.0
-    assert row["policy_recovered_per_1000_inr"] == expected_total_recovered_zero / 4 * 1000.0
-    # oracle mode: same escalated row credited amount-cost (it was won).
-    expected_total_recovered_oracle = (5000.0 - COST) + 0.0 + (-COST) + (4000.0 - COST)
-    assert (
-        row["policy_recovered_per_1000_inr_escalate_oracle"]
-        == expected_total_recovered_oracle / 4 * 1000.0
-    )
-    # naive_contest mode: same as oracle here since the escalated row's true
-    # label happens to be a win too - both credit amount-cost for it.
-    assert (
-        row["policy_recovered_per_1000_inr_escalate_naive_contest"]
-        == expected_total_recovered_oracle / 4 * 1000.0
-    )
+
+    # zero mode:          4600 + 0 - 400 + 0    = 4200 over 4 rows -> per 1,000
+    assert row["policy_recovered_per_1000_inr"] == 1_050_000.0
+    # oracle mode:        4600 + 0 - 400 + 3600 = 7800 (row 3 was a win)
+    assert row["policy_recovered_per_1000_inr_escalate_oracle"] == 1_950_000.0
+    # naive_contest:      identical here only because row 3's true label is a
+    # win; the two modes differ whenever an escalated dispute would have lost.
+    assert row["policy_recovered_per_1000_inr_escalate_naive_contest"] == 1_950_000.0
+
+    # Baseline A contests all four: 4600 - 400 - 400 + 3600 = 7400.
+    assert row["baseline_a_contest_everything_recovered_per_1000_inr"] == 1_850_000.0
+    assert row["baseline_b_accept_everything_recovered_per_1000_inr"] == 0.0
+
+    # Row 2 only: contested and lost.
     assert row["false_positive_count"] == 1
-    assert row["false_positive_cost_per_1000_inr"] == COST / 4 * 1000.0
+    assert row["false_positive_cost_per_1000_inr"] == 100_000.0
+    # No row is accepted-and-winnable: row 1 was accepted and genuinely lost.
     assert row["false_negative_count"] == 0
     assert row["false_negative_cost_per_1000_inr"] == 0.0
+    # Row 3 only.
     assert row["escalated_count"] == 1
-    assert row["escalated_amount_per_1000_inr"] == 4000.0 / 4 * 1000.0
-    assert row["escalated_amount_share_of_holdout"] == 4000.0 / (5000.0 + 2000.0 + 3000.0 + 4000.0)
+    assert row["escalated_amount_per_1000_inr"] == 1_000_000.0
+    assert row["escalated_amount_share_of_holdout"] == pytest.approx(4000.0 / 14000.0)
 
-    baseline_a = contest_everything_recovered(won, amount, COST).sum() / 4 * 1000.0
-    assert row["baseline_a_contest_everything_recovered_per_1000_inr"] == baseline_a
-    assert row["baseline_b_accept_everything_recovered_per_1000_inr"] == 0.0
+
+def test_the_naive_contest_and_oracle_modes_diverge_when_an_escalated_dispute_loses():
+    """The case the test above cannot distinguish, split out rather than left
+    to a comment. One escalated dispute that would have *lost*: the oracle
+    declines to contest it (0), naive_contest pays the fee (-400).
+    """
+    config = PolicyConfig(representment_cost_inr=COST, low_confidence_band=(0.45, 0.55))
+    p_win = np.array([0.5])
+    won = np.array([False])
+    amount = np.array([4000.0])
+
+    row = build_business_row(p_win, won, amount, config)
+
+    assert row["policy_recovered_per_1000_inr_escalate_oracle"] == 0.0
+    assert row["policy_recovered_per_1000_inr_escalate_naive_contest"] == -400_000.0

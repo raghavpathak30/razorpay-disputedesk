@@ -5,13 +5,15 @@ rather than the headline numbers (produced by `eval/run_business_harness.py`
 at n_rows=15000, >=20 seeds).
 """
 
+import numpy as np
 import pytest
 
 from disputedesk.generator.config import GeneratorConfig
 from disputedesk.model.config import ModelConfig
 from disputedesk.policy.config import PolicyConfig
 from eval.business_harness import fixed_seed_set, policy_beats_baseline, run_business_harness
-from eval.business_metrics import summarize_business
+from eval.business_metrics import build_business_row, summarize_business
+from eval.harness import LABEL_COLUMN, run_seed_pipeline
 
 CI_SEEDS = fixed_seed_set(8, start=0)
 CI_N_ROWS = 5000
@@ -50,11 +52,62 @@ def test_false_positive_and_false_negative_counts_are_non_negative(ci_business_s
 
 
 def test_false_positive_cost_matches_the_fixed_representment_cost_times_count(ci_business_summary):
+    """Round-trips the reported per-1,000 figure back to a rupee total and
+    checks the cost multiplier. Kept after the 2026-09-02 tautology review:
+    it re-derives from the same relationship the implementation uses, which
+    makes it weak, but it is *not* circular - verified by mutation (doubling
+    the per-FP cost makes it fail). The independent derivation below is what
+    actually pins the accounting.
+    """
     per_seed, _summary = ci_business_summary
     cost = PolicyConfig().representment_cost_inr
     implied_total = per_seed["false_positive_cost_per_1000_inr"] * per_seed["n"] / 1000.0
     expected_total = per_seed["false_positive_count"] * cost
     assert (implied_total.round(2) == expected_total.round(2)).all()
+
+
+def test_false_positive_and_negative_accounting_against_an_independent_derivation():
+    """Recomputes FP and FN from SPEC.md §4 and §6 directly, in this file, in
+    plain numpy - never calling `decide`, `decide_batch`, `false_positive_cost`
+    or `false_negative_cost`. If the production accounting and this closed form
+    disagree, one of them is wrong, and neither can hide behind the other.
+
+        low_confidence = low <= p_win <= high
+        expected_value = p_win * amount - cost
+        decision       = escalate if low_confidence
+                         else contest if expected_value > 0
+                         else accept
+        FP = contested and not won         -> cost is `cost` per row
+        FN = accepted and won              -> cost is the full amount
+    """
+    config = PolicyConfig()
+    low, high = config.low_confidence_band
+    cost = config.representment_cost_inr
+
+    run = run_seed_pipeline(0, CI_N_ROWS, GeneratorConfig(), ModelConfig())
+    amount = run.test_df["amount"].to_numpy()
+    won = run.test_df[LABEL_COLUMN].to_numpy().astype(bool)
+    p_win = np.asarray(run.predicted_p, dtype=float)
+
+    low_confidence = (p_win >= low) & (p_win <= high)
+    positive_ev = (p_win * amount - cost) > 0
+    contested = positive_ev & ~low_confidence
+    accepted = ~positive_ev & ~low_confidence
+
+    expected_fp_count = int((contested & ~won).sum())
+    expected_fn_count = int((accepted & won).sum())
+    expected_fn_total = float(amount[accepted & won].sum())
+    n = len(amount)
+
+    row = build_business_row(p_win, won, amount, config)
+
+    assert row["false_positive_count"] == expected_fp_count
+    assert row["false_positive_cost_per_1000_inr"] == pytest.approx(
+        expected_fp_count * cost / n * 1000.0
+    )
+    assert row["false_negative_count"] == expected_fn_count
+    assert row["false_negative_cost_per_1000_inr"] == pytest.approx(expected_fn_total / n * 1000.0)
+    assert row["escalated_count"] == int(low_confidence.sum())
 
 
 def test_escalated_and_decided_disputes_do_not_exceed_the_test_split_size(ci_business_summary):

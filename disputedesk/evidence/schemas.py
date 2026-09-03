@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from disputedesk.evidence.letter import LETTER_MIN_CHARS, NETWORK_SUMMARY_MAX_CHARS
+
 
 class NormalizedCommunicationLog(BaseModel):
     """The typed fields SPEC.md §2 asks the LLM to normalise
@@ -41,18 +43,29 @@ class NormalizedCommunicationLog(BaseModel):
 
 
 class ExplanationLetterOutput(BaseModel):
-    """The `explanation_letter` evidence object's drafted content (SPEC.md
-    §3's `explanation_letter` evidence type). The LLM drafts text; it does
-    not decide whether to contest (`policy/`'s job, already done before this
-    is ever called) and states no dollar/rupee figures beyond `amount` as
-    given to it.
+    """The LLM's *raw* drafted letter, before provenance is attached. The LLM
+    drafts text; it does not decide whether to contest (`policy/`'s job,
+    already done before this is ever called) and states no dollar/rupee
+    figures beyond `amount` as given to it.
+
+    This is the model's output schema only. The value that travels onward is
+    `disputedesk.evidence.letter.DraftedLetter`, which adds the `provenance`
+    field the submission gate reads - deliberately not a field here, because
+    the model must not be able to assert its own output's provenance.
+
+    `letter_text`'s ceiling is the card network's real limit
+    (`NETWORK_SUMMARY_MAX_CHARS`), not a looser drafting ceiling. Until
+    2026-09-02 it was 4,000 characters and the API client truncated to 1,000
+    at the wire, silently discarding three quarters of some letters; a body
+    over the limit now fails validation here instead, which routes the dispute
+    to the repair attempt and then to human review (SPEC.md §7 failure path 2).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     letter_text: str = Field(
-        min_length=50,
-        max_length=4000,
+        min_length=LETTER_MIN_CHARS,
+        max_length=NETWORK_SUMMARY_MAX_CHARS,
         description="The full explanation letter body, ready to submit as evidence.",
     )
     cites_evidence_types: list[str] = Field(

@@ -44,8 +44,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from disputedesk.features.build import REASON_CODES
-
 # Identifiers are interpolated directly into the Razorpay API request path
 # (`disputedesk/client/razorpay.py`'s `f"/disputes/{dispute_id}/..."`) and
 # used as SQL parameter values elsewhere - a `str` with no shape constraint
@@ -63,12 +61,25 @@ class DisputeEntity(BaseModel):
     payment_id: str = Field(pattern=_ID_PATTERN)
     amount: float = Field(gt=0, description="Rupees - see module docstring.")
     currency: str
-    # Restricted to the codes `disputedesk/evidence/reason_code_map.py` has a
-    # defense strategy for - that lookup raises `KeyError` on anything else,
-    # which would otherwise surface as an unhandled 500 for a `contest`-bound
-    # dispute instead of a 422 rejected here, at the boundary, per this
-    # phase's "validate every field, not just status" review.
-    reason_code: Literal[*REASON_CODES]
+    # Deliberately unconstrained beyond a length bound (2026-09-02, defect
+    # 0.3). This field used to be `Literal[*REASON_CODES]`, restricted to the
+    # four codes `disputedesk/evidence/reason_code_map.py` has a strategy for,
+    # which meant a dispute carrying any other code Razorpay publishes - Visa
+    # 83 among them - was rejected 422 at the boundary: no audit row, no queue
+    # entry, no trace, on a real chargeback with a real response deadline. A
+    # code this system cannot handle is an operational gap, not a malformed
+    # payload, and the two must not share an outcome.
+    #
+    # No character-class pattern either, because a genuinely malformed code
+    # must also reach the fallback rather than 422. That is safe here in a way
+    # it would not be for `id`/`payment_id` above: `reason_code` is never
+    # interpolated into a request path (`client/razorpay.py` builds paths from
+    # ids only), reaches SQLite only as a bound parameter, and is consumed by
+    # exactly two things - an ordinal encoder that maps an unseen value past
+    # the end of its vocabulary, and a dict lookup that now fails closed via
+    # `is_supported_reason_code`. The length bound is a cost/DoS constraint,
+    # the same kind as `customer_communication_log`'s below.
+    reason_code: str = Field(min_length=1, max_length=64)
     phase: Literal["fraud", "retrieval", "chargeback", "pre_arbitration", "arbitration"]
     status: Literal["open"]
 

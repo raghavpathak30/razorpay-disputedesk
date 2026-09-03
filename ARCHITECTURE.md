@@ -86,13 +86,29 @@ number, not silently fixed.
 
 ## The LLM authority boundary
 
-Exactly two jobs, both text-in/text-out, both schema-validated before use,
-neither touching a decision:
+Exactly three jobs (two until 2026-09-02), all schema-validated before use,
+none touching a decision:
 
 - **Draft `explanation_letter`** from the dispute's order-context facts
   (`disputedesk/evidence/draft_letter.py`).
 - **Normalise `customer_communication_log`** free text into typed boolean/
   enum fields (`disputedesk/evidence/normalize_comms.py`).
+- **Grade the drafted letter against the dispute record**
+  (`disputedesk/evidence/grounding.py`), withholding it from submission if any
+  factual assertion cannot be traced to a record field. Added 2026-09-02 under
+  the `SPEC.md` §2 amendment of that date.
+
+The third is the only one that can change what happens to a dispute, so its
+authority is bounded twice over. It is **one-directional** — it can move a
+letter from submittable to `failed_grounding`, never the reverse, and no path
+in the module constructs a `MODEL`-provenance letter. And it is **downstream of
+the decision**: it runs inside `assemble_evidence_packet`, on the `CONTEST`
+branch only, after `policy/` has decided and the decision has been persisted.
+A withhold leaves `policy_branch` on the audit row reading `contest`; what it
+changes is `validation_result`, which is a separate column recording a separate
+fact. `tests/test_grounding_gate_pipeline.py` asserts both directions, and
+asserts as a property of the source that `disputedesk/policy/` imports nothing
+from `disputedesk/evidence/`.
 
 Forbidden, explicitly, per `DECISIONS.md`'s "LLM authority boundary" entry:
 deciding contest vs. accept (`policy/`'s job, always resolved before the
@@ -130,22 +146,36 @@ only ever reads `packet.explanation_letter.letter_text`, a field that only
 exists after passing through this validation path or the deterministic
 fallback.
 
-**We measured whether the LLM adds predictive value, and it does not.**
-`disputedesk/evidence/normalize_comms.py`'s typed extraction scored mean
-AUC 0.4211 (5-fold CV, n=60, live Groq calls) against `true_fraud` versus a
-TF-IDF + logistic-regression baseline's 0.6371 on the same task
-(`DECISIONS.md`'s 2026-09-01 "LLM normalisation quality vs. TF-IDF
-baseline" entry). The extraction is reliable in format (zero repairs or
-fallbacks needed across the sample) but not predictive in content — a
-diagnosed, structural reason, not noise: two of the seven typed fields sit
-near 1.0 for both classes because the generator's comms-log design makes
-the real signal a frequency tilt across near-synonymous phrasings, which a
-coarse yes/no LLM extraction collapses and a bag-of-words vectorizer
-preserves. Nothing was changed in response to this number — no prompt,
-schema, or feature-encoding edit — per that entry's own explicit note; it
-is reported as a finding, not tuned away. It is the reason this project's
-LLM footprint stayed at "draft text" rather than expanding into "extract
-structured predictive signal."
+**We measured whether the LLM's typed extraction adds predictive value, and
+at the sample size available it cannot be shown either way.** Corrected
+2026-09-03 — this section previously read "we measured ... and it does not"
+against a TF-IDF baseline of 0.6371 that had no code, no recorded n, and no
+seed anywhere in the repository (see the stale-number audit,
+`DECISIONS.md`'s 2026-09-02 entries of that name). Re-implemented and scored
+on the **same 60 items, paired**: `disputedesk/evidence/normalize_comms.py`'s
+typed extraction reaches mean AUC 0.4211 (5-fold CV, n=60, live Groq calls,
+unchanged); the TF-IDF baseline on those identical items scores 0.5104, not
+0.6371 — that figure turns out to have been a large-sample measurement
+(0.6479 at n=3,000) used as the comparator for a 60-item run. The paired
+difference is +0.1624 in TF-IDF's favour, 95% bootstrap CI −0.0648 to
++0.3858 — **the interval includes zero**, and neither arm is distinguishable
+from chance at this n. The direction survives; "the LLM does not add
+predictive value" does not, because at n=60 nothing can be shown to add
+predictive value over anything else. Full numbers: `README.md`'s "LLM
+authority boundary" section and `python -m eval.run_extraction_comparison`
+(no API key needed — the LLM arm is a committed recording).
+
+The extraction is still reliable in format (zero repairs or fallbacks needed
+across the sample), and the structural argument for why it might struggle
+is unchanged and worth keeping as an explanation for a difference this
+evidence cannot establish: two of the seven typed fields sit near 1.0 for
+both classes because the generator's comms-log design makes the real signal
+a frequency tilt across near-synonymous phrasings, which a coarse yes/no
+LLM extraction collapses and a bag-of-words vectorizer preserves. This
+measurement is not, and was never, what justifies keeping the LLM's role
+narrow — that argument is architectural (the policy engine is a pure
+function of `p_win` and `amount`; the reason-code mapping is a lookup
+table; no LLM output does arithmetic on money) and stands on its own.
 
 ## The model
 
@@ -250,7 +280,30 @@ HTTP 429 under rate limits during an eval run, which is what made the
   path, so `contest()` submits the drafted letter as `summary` text only
   and records `required_evidence_types` in the audit log for a human to
   attach files against, rather than inventing document ids for files that
-  don't exist.
+  don't exist. Razorpay's contest documentation (re-read 2026-09-02) states
+  that `action="submit"` requires at least one document id across the
+  evidence fields — so a real submit from this system would likely be
+  *rejected* by the live API, not merely incomplete. Recorded in
+  `DECISIONS.md`'s 2026-09-02 entry of the same name; untested against the
+  live API.
+- **Append-only guards are SQLite-only.** `disputedesk/audit/db.py`
+  installs `BEFORE UPDATE`/`BEFORE DELETE` triggers that make the audit
+  tables append-only in the database, not merely by convention — but the
+  DDL is written and tested for SQLite alone. `init_db` *raises* on any
+  other dialect rather than coming up with an audit log that claims to be
+  append-only and is not. So "Postgres is a connection-string change" is no
+  longer quite true: a Postgres deployment additionally needs the
+  equivalent trigger DDL, or (cleaner there) `REVOKE UPDATE, DELETE` on the
+  application role. The hash chain
+  (`disputedesk/audit/chain.py`, `verify_chain()`) is dialect-independent
+  and works either way.
+- **The hash chain is tamper-evident, not tamper-proof.** Someone who can
+  drop the triggers can still edit a row — the chain guarantees they cannot
+  do it invisibly, because every later row commits to the edited row's
+  content, so the edit becomes a rewrite of the whole suffix of the log.
+  There is no off-box anchor (no periodic publication of the head hash), so
+  a full-suffix rewrite by a sufficiently privileged actor would verify
+  clean. Stated as what it is.
 - **No order-context lookup.** The webhook assumes order-context fields
   (`avs_match` through `checkout_hour_of_day`) arrive already joined onto
   the dispute payload; a real deployment needs to build that join from the

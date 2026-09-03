@@ -35,6 +35,12 @@ VALID_NORMALIZED = json.dumps(
     }
 )
 VALID_LETTER = json.dumps({"letter_text": "y" * 80, "cites_evidence_types": ["billing_proof"]})
+# The grounding gate's verdict - the third LLM call on the contest path
+# (2026-09-02). Every assertion supported, so the gate passes the letter
+# through and these tests keep testing the HTTP layer rather than the gate.
+VALID_GROUNDING = json.dumps(
+    {"assertions": [{"quote": "yy", "supporting_field": "avs_match", "verdict": "supported"}]}
+)
 
 VALID_ENTITY = {
     "id": "disp_1",
@@ -84,7 +90,7 @@ def wired_app(monkeypatch):
     """
     engine = get_engine("sqlite:///:memory:")
     init_db(engine)
-    fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER])
+    fake_llm = FakeLLMClient(responses=[VALID_NORMALIZED, VALID_LETTER, VALID_GROUNDING])
     fake_razorpay = FakeRazorpayClient()
 
     def _session_override():
@@ -114,7 +120,10 @@ def test_valid_open_dispute_event_returns_200_and_contests(wired_app):
     assert body["dispute_id"] == "disp_1"
     assert body["decision"] == "contest"
     assert body["already_processed"] is False
-    assert fake_razorpay.contest_calls == [("disp_1", 5000.0, "y" * 80)]
+    dispute_id, amount, letter, evidence_bundle = fake_razorpay.contest_calls[0]
+    assert (dispute_id, amount) == ("disp_1", 5000.0)
+    assert letter.letter_text == "y" * 80
+    assert len(evidence_bundle) > 0
 
 
 def test_malformed_webhook_is_rejected_with_422_and_not_processed(wired_app):
@@ -153,7 +162,11 @@ def test_replayed_webhook_event_does_not_double_file(wired_app):
     assert len(fake_razorpay.contest_calls) == 1
 
 
-def test_llm_degradation_still_returns_200_and_flags_human_review(wired_app):
+def test_llm_degradation_still_returns_200_and_withholds_the_template_letter(wired_app):
+    """The endpoint still returns 200 - it degraded rather than crashing - but
+    the unreviewed template letter is withheld from the card network and
+    queued for a person instead (defect 0.1).
+    """
     client, fake_razorpay, _engine = wired_app
     app.dependency_overrides[get_llm_client] = lambda: FakeLLMClient(
         responses=["not json", "still not json"]
@@ -162,5 +175,7 @@ def test_llm_degradation_still_returns_200_and_flags_human_review(wired_app):
     response = client.post("/webhooks/disputes", json=_event({"id": "disp_degraded"}))
 
     assert response.status_code == 200
-    assert response.json()["human_review_required"] is True
-    assert fake_razorpay.contest_calls[0][0] == "disp_degraded"  # still filed, just degraded
+    body = response.json()
+    assert body["human_review_required"] is True
+    assert body["api_outcome"] == "withheld_for_review"
+    assert fake_razorpay.contest_calls == []

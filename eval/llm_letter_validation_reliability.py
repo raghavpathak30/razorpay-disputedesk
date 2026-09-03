@@ -10,7 +10,7 @@ Uses `draft_explanation_letter` directly, not the full
 letter-drafting attempt) - so the measurement isolates letter-drafting
 reliability specifically, not conflated with `normalize_comms`'s own
 separate repair path. Neither the drafting prompt
-(`disputedesk/evidence/prompts/explanation_letter_v1.txt`) nor
+(`disputedesk/evidence/prompts/explanation_letter_v2.txt`) nor
 `disputedesk/evidence/draft_letter.py` itself is touched or reimplemented
 here - `_validation_error_text` below reuses `validated_call._parse`, the
 exact function production validation calls, so a reported error is the
@@ -86,7 +86,7 @@ def run_one_draft_attempt(
     llm_client: LLMClient,
 ) -> DraftAttemptRecord:
     recorder = _RecordingLLMClient(llm_client)
-    result = draft_explanation_letter(context, evidence_types, normalized_comms, recorder)
+    letter = draft_explanation_letter(context, evidence_types, normalized_comms, recorder)
 
     first_error = _validation_error_text(recorder.responses[0]) if recorder.responses else None
     repair_attempted = len(recorder.responses) >= 2
@@ -99,7 +99,10 @@ def run_one_draft_attempt(
         repair_attempted=repair_attempted,
         repair_succeeded=(repair_error is None) if repair_attempted else None,
         repair_error=repair_error,
-        final_path="template_fallback" if result.human_review_required else "letter",
+        # `letter` iff the model's own validated output survived; the
+        # deterministic template carries a non-`MODEL` provenance instead of
+        # a separate `human_review_required` flag since 2026-09-02.
+        final_path="template_fallback" if not letter.submittable else "letter",
         raw_responses=list(recorder.responses),
     )
 

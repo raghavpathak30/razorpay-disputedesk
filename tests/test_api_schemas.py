@@ -83,13 +83,32 @@ def test_missing_envelope_payload_is_rejected():
         DisputeWebhookEvent.model_validate({"event": "dispute.created"})
 
 
-def test_unrecognized_reason_code_is_rejected():
-    # disputedesk/evidence/reason_code_map.py has no defense strategy for
-    # anything outside the four known codes and raises KeyError - this must
-    # be rejected here, at the webhook boundary, not surface as an unhandled
-    # 500 later for a dispute the policy engine decides to contest.
+@pytest.mark.parametrize("reason_code", ["NOT_A_REAL_CODE", "VISA_83", "MC_4855", "!! junk !!"])
+def test_an_unrecognized_reason_code_is_accepted_at_the_boundary(reason_code):
+    """Reversed on 2026-09-02 (defect 0.3). This test previously asserted the
+    opposite - that anything outside the four codes with an evidence strategy
+    was rejected here - which meant Visa 83, a code on Razorpay's own
+    published reference, was 422'd at the boundary with no audit row and no
+    queue entry.
+
+    Shape validation belongs here; "do we have a strategy for this code" does
+    not, and the two must not share an outcome. The routing of an unrecognised
+    code to the documented fallback (tagged `reason_code_unrecognised`, queued,
+    nothing filed) is covered end to end in
+    `tests/test_evidence_published_reason_codes.py`.
+    """
+    event = DisputeWebhookEvent.model_validate(_event({"reason_code": reason_code}))
+
+    assert event.payload.dispute.entity.reason_code == reason_code
+
+
+@pytest.mark.parametrize("bad_reason_code", ["", "x" * 65])
+def test_a_reason_code_outside_the_length_bound_is_still_rejected(bad_reason_code):
+    """The one constraint that remains is a cost/DoS bound, not a
+    known-values check.
+    """
     with pytest.raises(ValidationError):
-        DisputeWebhookEvent.model_validate(_event({"reason_code": "NOT_A_REAL_CODE"}))
+        DisputeWebhookEvent.model_validate(_event({"reason_code": bad_reason_code}))
 
 
 @pytest.mark.parametrize("bad_id", ["disp/../secrets", "disp?x=1", "", "x" * 65])
