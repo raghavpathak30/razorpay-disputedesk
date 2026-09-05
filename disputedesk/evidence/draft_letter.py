@@ -25,14 +25,23 @@ from disputedesk.evidence.letter import (
 )
 from disputedesk.evidence.llm import LLMClient
 from disputedesk.evidence.prompts import load_prompt
+from disputedesk.evidence.reason_code_map import available_evidence_types
 from disputedesk.evidence.schemas import ExplanationLetterOutput, NormalizedCommunicationLog
 from disputedesk.evidence.validated_call import call_llm_and_validate
 
-PROMPT_VERSION = "explanation_letter_v2"
-"""v2 (2026-09-02) states the card network's character limit in the prompt
-itself; v1 quoted a 4,000-character budget the wire format could not carry.
-Kept as a new versioned file rather than an edit in place, per
-`disputedesk/evidence/prompts.py`."""
+PROMPT_VERSION = "explanation_letter_v3"
+"""v3 (2026-09-04) tells the model only the evidence types THIS dispute's own
+facts actually back up (`reason_code_map.available_evidence_types`), lists the
+rest as explicitly NOT being submitted, and instructs the model to state that
+gap rather than invent supporting narrative for it. v2 passed the reason
+code's full required set regardless of per-dispute availability, which was
+read by the model as "these are all being submitted" and produced exactly the
+fabricated claims (a delivery confirmation, an access-log match) the
+grounding gate then had to withhold - see DECISIONS.md's 2026-09-04
+remediation entry. v2 (2026-09-02) states the card network's character limit
+in the prompt itself; v1 quoted a 4,000-character budget the wire format
+could not carry. Kept as a new versioned file rather than an edit in place,
+per `disputedesk/evidence/prompts.py`."""
 
 
 def _deterministic_fallback(
@@ -69,6 +78,8 @@ def draft_explanation_letter(
     normalized_comms: NormalizedCommunicationLog,
     llm_client: LLMClient,
 ) -> DraftedLetter:
+    available = available_evidence_types(context, evidence_types)
+    missing = tuple(t for t in evidence_types if t not in available)
     prompt = load_prompt(PROMPT_VERSION).format(
         reason_code=context.reason_code,
         amount=f"{context.amount:.2f}",
@@ -77,7 +88,8 @@ def draft_explanation_letter(
         device_fingerprint_known=context.device_fingerprint_known,
         delivery_confirmed=context.delivery_confirmed,
         prior_order_count=context.prior_order_count,
-        evidence_types=", ".join(evidence_types),
+        evidence_types=", ".join(available),
+        missing_evidence_types=", ".join(missing) if missing else "none",
         comms_summary=normalized_comms.summary,
         comms_tone=normalized_comms.tone,
         min_chars=LETTER_MIN_CHARS,

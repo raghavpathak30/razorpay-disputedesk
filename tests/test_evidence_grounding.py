@@ -13,16 +13,22 @@ The invariants pinned here, in the order they matter:
    `require_submittable` raises on it with no new code in the client.
 """
 
+import json
+
 import httpx
 import pytest
 from pydantic import ValidationError
 
 from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.grounding import (
+    ALLOWED_SUPPORTING_FIELDS,
+    COMMS_FIELDS,
+    EVIDENCE_TYPE_FIELDS,
     RECORD_FIELDS,
     AssertionVerdict,
     GroundingVerdict,
     apply_grounding_gate,
+    build_prompt,
 )
 from disputedesk.evidence.letter import (
     DraftedLetter,
@@ -31,6 +37,7 @@ from disputedesk.evidence.letter import (
     require_submittable,
 )
 from disputedesk.evidence.llm import FakeLLMClient
+from disputedesk.evidence.schemas import NormalizedCommunicationLog
 
 CONTEXT = DisputeContext(
     reason_code="MC_4837",
@@ -231,3 +238,167 @@ class TestVerdictSchema:
         """Vacuous truth is a fail-open. An empty verdict means the grader
         found nothing to check, which is not evidence the letter is clean."""
         assert GroundingVerdict(assertions=[]).grounded is False
+
+
+class TestScopedWidening:
+    """2026-09-04 remediation: `supporting_field` now also accepts an
+    evidence-document type name and a `comms_*` field, so a letter that
+    legitimately cites an available evidence document or the customer's own
+    (normalized) message is no longer indistinguishable from one inventing a
+    fact outright. `RECORD_FIELDS` itself is untouched - see
+    `TestRecordFields` above, still pinned exactly as before."""
+
+    def test_every_evidence_type_field_is_now_accepted(self):
+        for field in EVIDENCE_TYPE_FIELDS:
+            AssertionVerdict(quote="x", supporting_field=field, verdict="supported")
+
+    def test_every_comms_field_is_now_accepted(self):
+        for field in COMMS_FIELDS:
+            AssertionVerdict(quote="x", supporting_field=field, verdict="supported")
+
+    def test_comms_fields_are_exactly_the_normalized_communication_log_fields(self):
+        assert COMMS_FIELDS == {f"comms_{name}" for name in NormalizedCommunicationLog.model_fields}
+
+    def test_allowed_supporting_fields_is_a_strict_superset_of_record_fields(self):
+        assert RECORD_FIELDS < ALLOWED_SUPPORTING_FIELDS
+
+    def test_a_genuinely_unknown_field_is_still_rejected(self):
+        """The widening adds two named surfaces; it does not accept anything
+        the grader feels like inventing."""
+        with pytest.raises(ValidationError):
+            AssertionVerdict(
+                quote="loyal customer",
+                supporting_field="customer_loyalty_tier",
+                verdict="supported",
+            )
+
+
+class TestDisputeBRegression:
+    """The exact failure this remediation was checked against: a dispute with
+    no AVS/CVV/device/delivery signal (the demo's WEAK_EVIDENCE_EVENT /
+    "Dispute B" profile) where the model asserted a tracked delivery that
+    `delivery_confirmed=False` contradicts. Widening the schema to accept
+    evidence-type and comms citations must not let this specific, genuine
+    fabrication back in - see DECISIONS.md's 2026-09-04 remediation entry,
+    which requires this exact case to still be withheld after the fix."""
+
+    WEAK_CONTEXT = DisputeContext(
+        reason_code="VISA_10_4",
+        amount=2200.0,
+        avs_match=False,
+        cvv_match=False,
+        device_fingerprint_known=False,
+        delivery_confirmed=False,
+        prior_order_count=0,
+    )
+
+    def _letter_claiming_tracked_delivery(self) -> DraftedLetter:
+        return DraftedLetter(
+            letter_text=(
+                "We contest the chargeback for INR 2200.00. Our fulfillment records "
+                "confirm that the item was delivered to the billing address, as "
+                "tracked by the shipping carrier."
+            ),
+            cites_evidence_types=("proof_of_service",),
+            provenance=LetterProvenance.MODEL,
+        )
+
+    def test_the_delivery_contradiction_is_still_withheld(self):
+        """The grader, informed (correctly, per the widened prompt) that
+        `proof_of_service` is NOT among this dispute's submitted evidence,
+        marks the claim contradicted - exactly the verdict the old, narrower
+        schema already supported via `delivery_confirmed`. The gate must
+        still withhold."""
+        grader_response = json.dumps(
+            {
+                "assertions": [
+                    {
+                        "quote": "the item was delivered to the billing address",
+                        "supporting_field": "delivery_confirmed",
+                        "verdict": "contradicted",
+                    }
+                ]
+            }
+        )
+        client = FakeLLMClient([grader_response])
+        result = apply_grounding_gate(
+            self._letter_claiming_tracked_delivery(), self.WEAK_CONTEXT, client
+        )
+        assert result.letter.provenance is LetterProvenance.FAILED_GROUNDING
+        assert result.letter.submittable is False
+        assert result.verdict is not None
+        assert result.verdict.ungrounded_assertions[0].verdict == "contradicted"
+
+    def test_citing_the_not_submitted_evidence_type_by_name_is_also_still_withheld(self):
+        """Same fabrication, but the grader extracts it as a citation of the
+        `proof_of_service` evidence-document type instead of the record
+        field. This is now schema-legal (the widening this remediation
+        added) - it must still be `contradicted`/`unsupported`, never
+        `supported`, because `proof_of_service` is not in this dispute's
+        available set."""
+        grader_response = json.dumps(
+            {
+                "assertions": [
+                    {
+                        "quote": "as tracked by the shipping carrier",
+                        "supporting_field": "proof_of_service",
+                        "verdict": "contradicted",
+                    }
+                ]
+            }
+        )
+        client = FakeLLMClient([grader_response])
+        result = apply_grounding_gate(
+            self._letter_claiming_tracked_delivery(), self.WEAK_CONTEXT, client
+        )
+        assert result.letter.provenance is LetterProvenance.FAILED_GROUNDING
+
+    def test_the_prompt_tells_the_grader_proof_of_service_is_not_submitted(self):
+        prompt = build_prompt(self._letter_claiming_tracked_delivery(), self.WEAK_CONTEXT)
+        missing_line = next(
+            line for line in prompt.splitlines() if line.startswith("Evidence documents NOT")
+        )
+        assert "proof_of_service" in missing_line
+
+
+class TestCommsSurface:
+    """The second half of the 2026-09-04 widening: a claim that paraphrases
+    the customer's own (normalized) message is checkable against Section 3,
+    not silently `unsupported`."""
+
+    NORMALIZED_COMMS = NormalizedCommunicationLog(
+        claims_unauthorized_transaction=True,
+        mentions_prior_bank_contact=True,
+        mentions_shared_card_access=False,
+        mentions_travel=False,
+        tone="polite",
+        is_substantive=True,
+        summary="Customer says they don't recognize the charge and already contacted their bank.",
+    )
+
+    def test_no_comms_record_falls_back_to_the_not_provided_sentinel(self):
+        prompt = build_prompt(_letter(), CONTEXT)
+        assert "not provided for this grading pass" in prompt
+        assert CONTEXT.reason_code in prompt
+
+    def test_a_real_comms_record_is_rendered_into_the_prompt(self):
+        prompt = build_prompt(_letter(), CONTEXT, self.NORMALIZED_COMMS)
+        assert "not provided for this grading pass" not in prompt
+        assert self.NORMALIZED_COMMS.summary in prompt
+
+    def test_a_claim_supported_by_comms_passes_the_gate(self):
+        grader_response = json.dumps(
+            {
+                "assertions": [
+                    {
+                        "quote": "the customer already contacted their bank",
+                        "supporting_field": "comms_mentions_prior_bank_contact",
+                        "verdict": "supported",
+                    }
+                ]
+            }
+        )
+        client = FakeLLMClient([grader_response])
+        result = apply_grounding_gate(_letter(), CONTEXT, client, self.NORMALIZED_COMMS)
+        assert result.letter.provenance is LetterProvenance.MODEL
+        assert result.letter.submittable is True

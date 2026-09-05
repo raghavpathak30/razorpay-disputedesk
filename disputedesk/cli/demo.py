@@ -67,8 +67,9 @@ from disputedesk.client.razorpay import FakeRazorpayClient, RazorpayHttpClient
 from disputedesk.config import get_settings
 from disputedesk.evidence.assembler import assemble_evidence_packet
 from disputedesk.evidence.context import DisputeContext
+from disputedesk.evidence.letter import LetterProvenance
 from disputedesk.evidence.llm import FakeLLMClient, GroqHttpLLMClient
-from disputedesk.evidence.reason_code_map import required_evidence_types
+from disputedesk.evidence.reason_code_map import available_evidence_types, required_evidence_types
 from disputedesk.features.matrix import build_feature_matrix
 from disputedesk.generator.config import GeneratorConfig
 from disputedesk.generator.pipeline import generate_dataset, temporal_split
@@ -495,29 +496,6 @@ def _print_segment_header(title: str) -> None:
     print("#" * 72)
 
 
-# Demo-only, printing-only judgment of which of a reason code's required
-# evidence types this *specific* dispute's own order-context facts actually
-# support - not part of the production evidence assembler, which does not
-# gate assembly on availability today (a stated gap, see ARCHITECTURE.md's
-# "Known gaps": no document-upload pipeline, no per-type file existence
-# check). Mirrors reason_code_map.py's own comments on what each evidence
-# type stands for. `customer_communication` and `explanation_letter` are
-# always produced (the raw log is always present in these fixtures; the
-# letter is always drafted, by the LLM or the deterministic fallback).
-_ALWAYS_AVAILABLE_EVIDENCE = ("customer_communication", "explanation_letter")
-
-
-def _available_evidence_types(entity: dict) -> set[str]:
-    available = set(_ALWAYS_AVAILABLE_EVIDENCE)
-    if entity["avs_match"] and entity["cvv_match"]:
-        available.add("billing_proof")
-    if entity["device_fingerprint_known"]:
-        available.add("access_activity_log")
-    if entity["delivery_confirmed"]:
-        available.add("proof_of_service")
-    return available
-
-
 def _context_from_entity(entity: dict) -> DisputeContext:
     return DisputeContext(
         reason_code=entity["reason_code"],
@@ -534,7 +512,7 @@ def _print_letter_sample(label: str, event: dict, llm_client: GroqHttpLLMClient)
     entity = event["payload"]["dispute"]["entity"]
     context = _context_from_entity(entity)
     required = required_evidence_types(context.reason_code)
-    available = _available_evidence_types(entity)
+    available = set(available_evidence_types(context, required))
     missing = [t for t in required if t not in available]
 
     print()
@@ -547,12 +525,43 @@ def _print_letter_sample(label: str, event: dict, llm_client: GroqHttpLLMClient)
     print(f"  documented gap (unavailable) = {missing or 'none - full required set available'}")
 
     packet = assemble_evidence_packet(context, entity["customer_communication_log"], llm_client)
-    if packet.human_review_required:
-        print("  NOTE: the live LLM call failed validation twice - this is the")
-        print("  deterministic fallback template, not a real completion:")
+    letter = packet.explanation_letter
+    if letter.provenance is LetterProvenance.FALLBACK:
+        print("  NOTE: the live LLM call failed validation twice (the original")
+        print("  completion and the one repair attempt) - this is the deterministic")
+        print("  template, not a real completion:")
+    elif letter.provenance is LetterProvenance.LOW_CONFIDENCE:
+        print("  NOTE: this is a real model completion, but it exceeded the network's")
+        print("  character limit and had to be truncated - it is no longer the")
+        print("  model's own validated output, so it is held for review:")
+    elif letter.provenance is LetterProvenance.FAILED_GROUNDING:
+        print("  NOTE: this IS a real model completion - drafted, schema-valid, and NOT")
+        print("  a fallback. The grounding gate WITHHELD it because it asserts something")
+        print("  the dispute record does not support:")
+        if packet.grounding_verdict is None:
+            print("    (the grader itself could not reach a verdict - withheld to be safe,")
+            print("     not because a specific claim was identified as unsupported)")
+        else:
+            for a in packet.grounding_verdict.ungrounded_assertions:
+                print(f"    [{a.verdict}] field={a.supporting_field!r}: {a.quote!r}")
+    elif packet.human_review_required:
+        # letter.provenance is MODEL here - the letter itself is real and grounded.
+        # Something else in the packet fell back: either comms normalization, or
+        # evidence-bundle rendering.
+        print("  NOTE: the explanation letter below is a real, validated model")
+        print("  completion (not a fallback). The packet still needs human review")
+        print(
+            "  because "
+            + (
+                "evidence-bundle rendering failed for this dispute."
+                if packet.evidence_bundle is None
+                else "the customer-communication normalizer fell back to its own "
+                "deterministic template for this dispute."
+            )
+        )
     else:
         print("  drafted explanation_letter (live Groq completion, verbatim, no truncation):")
-    print(f"  {packet.explanation_letter.letter_text}")
+    print(f"  {letter.letter_text}")
 
 
 def demo_segment_b_llm_letters() -> bool:

@@ -44,11 +44,25 @@ from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.letter import DraftedLetter, LetterProvenance
 from disputedesk.evidence.llm import LLMClient
 from disputedesk.evidence.prompts import load_prompt
+from disputedesk.evidence.reason_code_map import (
+    REQUIRED_EVIDENCE_BY_REASON_CODE,
+    available_evidence_types,
+    required_evidence_types,
+)
+from disputedesk.evidence.schemas import NormalizedCommunicationLog
 from disputedesk.evidence.validated_call import call_llm_and_validate
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "grounding_gate_v1"
+PROMPT_VERSION = "grounding_gate_v2"
+"""v2 (2026-09-04) adds two more surfaces the grader may cite as
+`supporting_field` - see `EVIDENCE_TYPE_FIELDS` and `COMMS_FIELDS` below - so
+that a letter legitimately citing an available evidence document or the
+customer's own (normalized) message is no longer indistinguishable from one
+inventing a fact outright. v1 (2026-09-02) is unchanged and still what a
+caller that passes no `normalized_comms` effectively gets for Section 3 (see
+`_comms_field_values`'s "not provided" sentinel). See DECISIONS.md's
+2026-09-04 remediation entry."""
 
 RECORD_FIELDS: frozenset[str] = frozenset(
     {
@@ -61,11 +75,43 @@ RECORD_FIELDS: frozenset[str] = frozenset(
         "prior_order_count",
     }
 )
-"""Every field of `DisputeContext`, and the only values the grader may name in
-`supporting_field`. Frozen here rather than derived from `DisputeContext`'s
-annotations so that adding a field to the context does not silently widen what
-the grader is allowed to claim support from - `tests/test_evidence_grounding.py`
-asserts the two agree, so they can only diverge loudly."""
+"""Every field of `DisputeContext`. Frozen here rather than derived from
+`DisputeContext`'s annotations so that adding a field to the context does not
+silently widen what the grader is allowed to claim support from -
+`tests/test_evidence_grounding.py` asserts the two agree, so they can only
+diverge loudly. Unchanged by the v2 widening below - `ALLOWED_SUPPORTING_FIELDS`
+is a strict superset of this set, not a replacement for it."""
+
+EVIDENCE_TYPE_FIELDS: frozenset[str] = frozenset().union(*REQUIRED_EVIDENCE_BY_REASON_CODE.values())
+"""Every evidence-document type name any supported reason code can require
+(`disputedesk.evidence.reason_code_map.REQUIRED_EVIDENCE_BY_REASON_CODE`), and
+now also a legitimate `supporting_field` value: a letter that says "our
+billing proof shows..." is naming a real part of the submission, not
+inventing a fact, and the schema must let the grader say so. Whether a given
+type is actually available for *this* dispute is not a schema question - the
+prompt (`build_prompt`) tells the grader which of these are and are not being
+submitted, and the grader's job is to mark a citation of a not-submitted type
+`contradicted` or `unsupported`, exactly as it already does for a `False`
+context field. Naming the type is always well-formed; claiming support from
+one that was not actually submitted is not, and stays exactly as rejectable
+as it was before this widening."""
+
+COMMS_FIELDS: frozenset[str] = frozenset(
+    f"comms_{name}" for name in NormalizedCommunicationLog.model_fields
+)
+"""Every field of `NormalizedCommunicationLog`, prefixed `comms_` so a
+`supporting_field` value can never collide with a `RECORD_FIELDS` or
+`EVIDENCE_TYPE_FIELDS` name. Derived from the schema, not hand-listed, for the
+same reason `RECORD_FIELDS` documents choosing the opposite (hand-listed
+against `DisputeContext`): `NormalizedCommunicationLog` already has its own
+`extra="forbid"` schema boundary and its own tests
+(`tests/test_evidence_schemas.py`), so there is no comparable risk of a field
+silently appearing here that the grader was never meant to see."""
+
+ALLOWED_SUPPORTING_FIELDS: frozenset[str] = RECORD_FIELDS | EVIDENCE_TYPE_FIELDS | COMMS_FIELDS
+"""The full set `AssertionVerdict.supporting_field` may name. A strict
+superset of `RECORD_FIELDS` - see that constant's own docstring and
+`EVIDENCE_TYPE_FIELDS`/`COMMS_FIELDS` above for what was added and why."""
 
 MAX_ASSERTIONS = 40
 """A bound on how much a grader can return. A letter is capped at 1,000
@@ -97,10 +143,13 @@ class AssertionVerdict(BaseModel):
         this claim, so both must name it. `unsupported` says the record has no
         such field, so naming one is a contradiction in terms.
         """
-        if self.supporting_field is not None and self.supporting_field not in RECORD_FIELDS:
+        if (
+            self.supporting_field is not None
+            and self.supporting_field not in ALLOWED_SUPPORTING_FIELDS
+        ):
             raise ValueError(
-                f"supporting_field {self.supporting_field!r} is not a record field; "
-                f"expected one of {sorted(RECORD_FIELDS)} or null"
+                f"supporting_field {self.supporting_field!r} is not a record, evidence-type, "
+                f"or comms field; expected one of {sorted(ALLOWED_SUPPORTING_FIELDS)} or null"
             )
         if self.verdict == "unsupported" and self.supporting_field is not None:
             raise ValueError("an 'unsupported' assertion must not name a supporting_field")
@@ -164,7 +213,32 @@ def _withhold(letter: DraftedLetter) -> DraftedLetter:
     )
 
 
-def build_prompt(letter: DraftedLetter, context: DisputeContext) -> str:
+_COMMS_NOT_PROVIDED = "not provided for this grading pass"
+"""Sentinel Section 3 value when no `normalized_comms` was given to
+`build_prompt`. Every `comms_*` value reads exactly this string in that case
+so the prompt's own instruction ("if every value in this section reads
+exactly...") can detect it without a second code path."""
+
+
+def _comms_field_values(normalized_comms: NormalizedCommunicationLog | None) -> dict[str, object]:
+    if normalized_comms is None:
+        return {
+            f"comms_{name}": _COMMS_NOT_PROVIDED for name in NormalizedCommunicationLog.model_fields
+        }
+    return {
+        f"comms_{name}": getattr(normalized_comms, name)
+        for name in NormalizedCommunicationLog.model_fields
+    }
+
+
+def build_prompt(
+    letter: DraftedLetter,
+    context: DisputeContext,
+    normalized_comms: NormalizedCommunicationLog | None = None,
+) -> str:
+    required = required_evidence_types(context.reason_code)
+    available = available_evidence_types(context, required)
+    missing = tuple(t for t in required if t not in available)
     return load_prompt(PROMPT_VERSION).format(
         reason_code=context.reason_code,
         amount=f"{context.amount:.2f}",
@@ -173,15 +247,26 @@ def build_prompt(letter: DraftedLetter, context: DisputeContext) -> str:
         device_fingerprint_known=context.device_fingerprint_known,
         delivery_confirmed=context.delivery_confirmed,
         prior_order_count=context.prior_order_count,
+        available_evidence_types=", ".join(available),
+        missing_evidence_types=", ".join(missing) if missing else "none",
         letter_text=letter.letter_text,
+        **_comms_field_values(normalized_comms),
     )
 
 
 def grade_letter(
-    letter: DraftedLetter, context: DisputeContext, llm_client: LLMClient
+    letter: DraftedLetter,
+    context: DisputeContext,
+    llm_client: LLMClient,
+    normalized_comms: NormalizedCommunicationLog | None = None,
 ) -> tuple[GroundingVerdict | None, str | None]:
     """The grader call on its own, separated from the gate so the eval harness
     can score verdicts without going through provenance bookkeeping.
+
+    `normalized_comms` is optional (default `None`, meaning "no comms record
+    available to this grading pass" - see `_COMMS_NOT_PROVIDED`) so existing
+    callers that only have a letter and a context keep working unchanged; the
+    real pipeline (`assembler.py`) always has it and always passes it.
 
     Returns `(verdict, None)` on success and `(None, reason)` on any failure.
     Catches broadly and deliberately: a grader that cannot be reached must
@@ -189,7 +274,7 @@ def grade_letter(
     whole pipeline run down with it (SPEC.md §7 - the system degrades, it does
     not crash).
     """
-    prompt = build_prompt(letter, context)
+    prompt = build_prompt(letter, context, normalized_comms)
     try:
         parsed = call_llm_and_validate(llm_client, prompt, GroundingVerdict)
     except Exception as error:  # noqa: BLE001 - any grader failure must fail closed
@@ -201,7 +286,10 @@ def grade_letter(
 
 
 def apply_grounding_gate(
-    letter: DraftedLetter, context: DisputeContext, llm_client: LLMClient
+    letter: DraftedLetter,
+    context: DisputeContext,
+    llm_client: LLMClient,
+    normalized_comms: NormalizedCommunicationLog | None = None,
 ) -> GateResult:
     """Run the gate over a drafted letter.
 
@@ -212,7 +300,7 @@ def apply_grounding_gate(
     if not letter.submittable:
         return GateResult(letter=letter, verdict=None, failure_reason=None)
 
-    verdict, failure_reason = grade_letter(letter, context, llm_client)
+    verdict, failure_reason = grade_letter(letter, context, llm_client, normalized_comms)
     if verdict is None:
         return GateResult(
             letter=_withhold(letter),

@@ -77,7 +77,7 @@ def assemble_evidence_packet(
 
     comms_result = normalize_communication_log(raw_communication_log, llm_client)
     letter = draft_explanation_letter(context, evidence_types, comms_result.normalized, llm_client)
-    gate_result = apply_grounding_gate(letter, context, llm_client)
+    gate_result = apply_grounding_gate(letter, context, llm_client, comms_result.normalized)
 
     try:
         evidence_bundle = render_evidence_bundle(

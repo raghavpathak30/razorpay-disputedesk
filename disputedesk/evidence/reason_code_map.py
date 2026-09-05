@@ -17,6 +17,7 @@ fulfilled, and the customer's own communication - rather than inventing
 network-specific requirements with no source behind them.
 """
 
+from disputedesk.evidence.context import DisputeContext
 from disputedesk.features.build import REASON_CODES
 
 # SPEC.md §3's evidence object types, restricted to what a CNP fraud dispute
@@ -79,3 +80,44 @@ def required_evidence_types(reason_code: str) -> tuple[str, ...]:
     standing between an unknown code and a crash.
     """
     return REQUIRED_EVIDENCE_BY_REASON_CODE[canonical_reason_code(reason_code)]
+
+
+# `customer_communication` and `explanation_letter` never depend on a
+# per-dispute signal: the raw communication log is always present on a
+# dispute row, and the explanation letter is always drafted - by the LLM, or
+# by the deterministic fallback if that fails
+# (`disputedesk/evidence/draft_letter.py`).
+_ALWAYS_AVAILABLE_EVIDENCE: frozenset[str] = frozenset(
+    {"customer_communication", "explanation_letter"}
+)
+
+
+def available_evidence_types(context: DisputeContext, required: tuple[str, ...]) -> tuple[str, ...]:
+    """Which of `required`'s evidence types THIS dispute's own order-context
+    facts actually back up - a strict subset of `required`, never a superset.
+
+    `required_evidence_types` says what a reason code needs in general;
+    it says nothing about whether a *given* dispute can actually supply it.
+    Feeding the full required set to the drafting prompt regardless of
+    availability told the model evidence was "being submitted" that in fact
+    was not, and the model filled the gap by inventing supporting narrative
+    for it (2026-09-04 remediation - see DECISIONS.md). This function is the
+    one place that per-dispute judgment is made, so the drafting prompt
+    (`draft_letter.py`) and any future caller share the same answer instead
+    of each re-deriving it.
+
+    Deterministic, no I/O, no LLM (SPEC.md §2) - mirrors exactly the
+    evidence-document renderers' own preconditions in
+    `disputedesk/evidence/documents.py` (billing_proof needs both AVS and
+    CVV to match; access_activity_log needs a known device; proof_of_service
+    needs confirmed delivery), so "available to cite in the letter" and
+    "renderable as a document" cannot silently diverge.
+    """
+    available = set(_ALWAYS_AVAILABLE_EVIDENCE)
+    if context.avs_match and context.cvv_match:
+        available.add("billing_proof")
+    if context.device_fingerprint_known:
+        available.add("access_activity_log")
+    if context.delivery_confirmed:
+        available.add("proof_of_service")
+    return tuple(t for t in required if t in available)

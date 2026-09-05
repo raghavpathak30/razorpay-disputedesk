@@ -84,3 +84,81 @@ def test_fallback_never_claims_the_amount_or_reason_code_are_anything_but_given(
     assert "MC_4837" in letter.letter_text
     assert "999.50" in letter.letter_text
     assert "no" in letter.letter_text
+
+
+class _RecordingLLMClient:
+    """Not a `FakeLLMClient`: records every prompt it is called with, so a
+    test can assert on prompt *content* rather than only on the parsed
+    result."""
+
+    def __init__(self, responses: list[str]):
+        self._responses = responses
+        self.prompts: list[str] = []
+
+    def complete(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        index = min(len(self.prompts) - 1, len(self._responses) - 1)
+        return self._responses[index]
+
+
+class TestPromptOnlyOffersAvailableEvidence:
+    """2026-09-04 remediation: the prompt must tell the model only the
+    evidence types THIS dispute's own facts back up, and name the rest as
+    explicitly not being submitted - not the reason code's full required set
+    regardless of availability. See DECISIONS.md's 2026-09-04 entry and
+    `tests/test_evidence_reason_code_map.py::TestAvailableEvidenceTypes`."""
+
+    WEAK_CONTEXT = DisputeContext(
+        reason_code="VISA_10_4",
+        amount=2200.0,
+        avs_match=False,
+        cvv_match=False,
+        device_fingerprint_known=False,
+        delivery_confirmed=False,
+        prior_order_count=0,
+    )
+    FULL_REQUIRED = (
+        "billing_proof",
+        "access_activity_log",
+        "proof_of_service",
+        "explanation_letter",
+    )
+
+    @staticmethod
+    def _submitted_and_missing_blocks(prompt: str) -> tuple[str, str]:
+        """The template wraps each of these two sentences onto two lines, so
+        a single-line match on the leading text would miss the values on the
+        line after it. Slice on the sentences' own start markers instead -
+        both are guaranteed to appear, in this order, by
+        `explanation_letter_v3.txt`."""
+        submitted_start = prompt.index("Evidence types actually")
+        missing_start = prompt.index("Evidence types NOT")
+        comms_start = prompt.index("Customer's own message")
+        return prompt[submitted_start:missing_start], prompt[missing_start:comms_start]
+
+    def test_unavailable_types_are_listed_as_missing_not_as_being_submitted(self):
+        client = _RecordingLLMClient(responses=[VALID_LETTER_RESPONSE])
+        draft_explanation_letter(self.WEAK_CONTEXT, self.FULL_REQUIRED, NORMALIZED_COMMS, client)
+
+        submitted_block, missing_block = self._submitted_and_missing_blocks(client.prompts[0])
+        assert "billing_proof" not in submitted_block
+        assert "proof_of_service" not in submitted_block
+        assert "billing_proof" in missing_block
+        assert "proof_of_service" in missing_block
+
+    def test_available_types_are_still_offered_when_the_dispute_backs_them_up(self):
+        full_context = DisputeContext(
+            reason_code="MC_4837",
+            amount=6500.0,
+            avs_match=True,
+            cvv_match=True,
+            device_fingerprint_known=True,
+            delivery_confirmed=True,
+            prior_order_count=6,
+        )
+        client = _RecordingLLMClient(responses=[VALID_LETTER_RESPONSE])
+        draft_explanation_letter(full_context, self.FULL_REQUIRED, NORMALIZED_COMMS, client)
+
+        submitted_block, missing_block = self._submitted_and_missing_blocks(client.prompts[0])
+        assert "billing_proof" in submitted_block
+        assert missing_block.splitlines()[0].strip().endswith("none")
