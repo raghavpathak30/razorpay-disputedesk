@@ -1,11 +1,18 @@
 """Interval estimation for the grounding-gate evaluation.
 
-Three estimators, each chosen for the shape of the question it answers:
+Four estimators, each chosen for the shape of the question it answers:
 
 - **Wilson score interval** for a single rate (false-flag rate, per-class
   detection rate). Wilson rather than the normal approximation because these
   rates sit near 0 or 1 at n in the low hundreds, exactly where the normal
   interval runs past the [0, 1] boundary and stops meaning anything.
+- **Clopper-Pearson exact interval**, used specifically for the small-n
+  measurement pre-registered in DECISIONS.md 2026-09-03 ("Grounding-gate
+  measurement, small-n run pre-registered"). It inverts the exact binomial CDF
+  rather than approximating it, so unlike Wilson it stays valid - not just
+  close - at the very small numerators (including zero) this measurement can
+  land on at n=45. It is conservative (wider) than Wilson at the same n; that
+  is the correct trade at this n, not a defect.
 - **Exact McNemar** for "does the gate beat the baseline on this class".
   Both arms make a hard binary decision on the *same* item, so the paired
   information is entirely in the discordant pairs, and the exact binomial test
@@ -25,7 +32,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.stats import binomtest
+from scipy.stats import beta, binomtest
 
 DEFAULT_CONFIDENCE = 0.95
 DEFAULT_N_BOOTSTRAP = 10_000
@@ -35,7 +42,13 @@ _Z = {0.90: 1.6448536269514722, 0.95: 1.959963984540054, 0.99: 2.575829303548900
 
 @dataclass(frozen=True)
 class Rate:
-    """A proportion that always travels with its n and its interval."""
+    """A proportion that always travels with its n and its interval.
+
+    `method` names which interval was used ("Wilson" or "Clopper-Pearson") -
+    added because both `wilson()` and `clopper_pearson()` build this same
+    class, and a `__str__` that always said "Wilson CI" would mislabel every
+    Clopper-Pearson result it prints.
+    """
 
     label: str
     numerator: int
@@ -43,6 +56,7 @@ class Rate:
     ci_low: float
     ci_high: float
     confidence: float
+    method: str = "Wilson"
 
     @property
     def value(self) -> float:
@@ -51,7 +65,7 @@ class Rate:
     def __str__(self) -> str:
         return (
             f"{self.label}: {self.value:.3f} ({self.numerator}/{self.denominator}, "
-            f"{int(self.confidence * 100)}% Wilson CI {self.ci_low:.3f}-{self.ci_high:.3f})"
+            f"{int(self.confidence * 100)}% {self.method} CI {self.ci_low:.3f}-{self.ci_high:.3f})"
         )
 
 
@@ -59,7 +73,7 @@ def wilson(
     numerator: int, denominator: int, label: str = "", confidence: float = DEFAULT_CONFIDENCE
 ) -> Rate:
     if denominator <= 0:
-        return Rate(label, numerator, denominator, float("nan"), float("nan"), confidence)
+        return Rate(label, numerator, denominator, float("nan"), float("nan"), confidence, "Wilson")
     z = _Z[confidence]
     p = numerator / denominator
     denom = 1.0 + z * z / denominator
@@ -68,8 +82,38 @@ def wilson(
         z / denom * math.sqrt(p * (1 - p) / denominator + z * z / (4 * denominator * denominator))
     )
     return Rate(
-        label, numerator, denominator, max(0.0, center - half), min(1.0, center + half), confidence
+        label,
+        numerator,
+        denominator,
+        max(0.0, center - half),
+        min(1.0, center + half),
+        confidence,
+        "Wilson",
     )
+
+
+def clopper_pearson(
+    numerator: int, denominator: int, label: str = "", confidence: float = DEFAULT_CONFIDENCE
+) -> Rate:
+    """Exact binomial CI: inverts the Beta CDF rather than approximating it,
+    so it is valid (not just asymptotically close) at the small numerators -
+    including zero - this measurement's n=45 can produce. Standard
+    Beta-quantile construction: the lower bound comes from Beta(k, n-k+1) and
+    the upper from Beta(k+1, n-k), each collapsing to the [0, 1] boundary at
+    k=0 or k=n rather than requiring a special case.
+    """
+    if denominator <= 0:
+        return Rate(
+            label, numerator, denominator, float("nan"), float("nan"), confidence, "Clopper-Pearson"
+        )
+    alpha = 1.0 - confidence
+    lo = 0.0 if numerator == 0 else beta.ppf(alpha / 2, numerator, denominator - numerator + 1)
+    hi = (
+        1.0
+        if numerator == denominator
+        else beta.ppf(1 - alpha / 2, numerator + 1, denominator - numerator)
+    )
+    return Rate(label, numerator, denominator, float(lo), float(hi), confidence, "Clopper-Pearson")
 
 
 @dataclass(frozen=True)

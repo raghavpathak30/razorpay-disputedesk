@@ -3591,3 +3591,373 @@ README additions, eval-only.
 band cost with its own directly-paired CI, and states explicitly whether
 that CI excludes zero).
 **Status:** DECIDED.
+
+---
+
+## 2026-09-03 — Grounding-gate measurement, small-n run pre-registered
+
+**n and why.** n=45 letters drafted (`--seed 0`), all three corpus classes
+graded in full: 45 clean, 45 unrecorded (Class B), up to 45 contradiction
+(Class A — actual count depends on how many drafts mention a flippable field,
+unknown until the run). This n is budget-bound, not power-bound: at 599
+tokens/call (this project's own recorded empirical rate) and 5 calls/letter
+worst case, n=45 uses ≈134,775 of the 200,000 TPD ceiling, leaving 32.6%
+headroom. It was not chosen to hit a target CI width.
+
+**Priority.** Class A/B (false-pass: does the gate let a genuinely ungrounded
+letter through) is the priority metric — it bears on the track's disqualifying
+criterion around ungrounded claims reaching the network, and is currently
+"unmeasured... a separate, still-open question" per the README. False-flag
+(clean class) is measured too, since at this n it fits in full alongside A/B
+with no separate sacrifice — the cost per class is symmetric (one grading
+call regardless of class), so full 3-class grading fits the budget up to
+n≈46 before any tradeoff would be needed at all; pushing n further to narrow
+the Class A/B interval was considered and rejected (n 45→52 would buy ~7%
+narrower Class A/B CIs at the cost of cutting the clean sample by ~44%, a
+poor trade not worth making unprompted).
+
+**Estimators.** Clopper-Pearson exact 95% CI (`eval/grounding_stats.clopper_pearson`,
+added this session) on: the gate's false-flag rate (clean class); the gate's
+false-pass rate on Class A (contradiction) and Class B (unrecorded), reported
+separately, never pooled — pooling would let the easy class (A) carry the
+hard one (B) and obscure a real difference between the two failure modes.
+
+**Published regardless of outcome.** The result is reported whatever it is,
+including a miss against the 2.3% budget or a high false-pass rate on either
+class. A zero-event count on either false-pass class will be reported as the
+count plus its Clopper-Pearson upper bound, not as "the gate caught
+everything" — zero events at n≤45 does not rule out a true miss rate in the
+high single digits.
+
+**No adjustment after seeing the result.** n will not be increased, and the
+run will not be repeated with a different seed, to obtain a better number.
+
+**Status:** PRE-REGISTERED. Run follows this commit.
+
+---
+
+## 2026-09-03 — Second pre-registration: why the clean-class false-flag rate is so high
+
+**This is not a re-run of the estimator above.** The n=45 run (previous entry)
+completed and its result stands, published regardless of what follows here —
+43/45 flagged (95.6%), 95% CP CI [0.849, 0.995], decisively missing the 2.3%
+budget. That is not being revisited or improved. This entry pre-registers a
+*different* question, forced by a defect discovered while reading that
+result: `eval/grounding_eval.py::score_item` extracted `gate_flagged` and
+`n_assertions` (a count) from each `GroundingVerdict` and discarded the verdict
+object itself — so the *content* the grader called unsupported was never
+written to disk, only the fact that something was. That made the first run's
+extreme rate impossible to interpret from recorded data (manual reading of
+the 25 flagged letters' *text* found several plausible causes, but none could
+be confirmed against what the grader actually cited). This is a ground-truth
+recording defect, now fixed (`assertions_json`, this session's commit) — the
+second measurement exists to use the fix, not to chase a better headline
+number.
+
+**Question.** For the 27 clean-class items that received a grader verdict in
+the original n=45 run, do the spans the grader cited as unsupported
+correspond to content with no `RECORD_FIELDS` entry?
+
+**Estimator.** Of all assertions the grader marked `"unsupported"` across
+those 27 items, the proportion falling into each of:
+- **(a)** a fact absent from the record entirely — dates, IPs, emails,
+  tracking numbers, named people;
+- **(b)** an evidence-document name (`billing_proof`, `access_activity_log`,
+  `proof_of_service`, `customer_communication`) that `RECORD_FIELDS` does not
+  contain;
+- **(c)** customer communication-log content, which `RECORD_FIELDS` does not
+  contain;
+- **(d)** content that IS in one of the seven record fields — a genuine
+  grader error.
+
+**Only (d) is a false flag.** (a), (b), and (c) are the gate correctly
+following its own narrow schema on content that schema was never given a
+field for — a design gap (recorded separately in the README's Limits
+section, not fixed tonight), not the grader making a mistake.
+
+**Categorization method, disclosed in advance.** (a)-(d) are not mechanical
+labels the way the corpus's contradiction/unrecorded classes are — assigning
+each `"unsupported"` assertion to a bucket is a manual read, done by whoever
+runs the analysis, against the four definitions above. This is stated before
+seeing the assertions, not after, so the categories cannot be shaped to fit
+a preferred outcome.
+
+**n = 27, fixed, not adjustable.** These are exactly the clean-class items
+that received a verdict in the already-completed n=45 run — same seed (0),
+same letters (`data/reference/grounding_letters_seed0_n45.csv`), same
+`grounding_gate_v1` prompt. Only the persistence layer changed
+(`assertions_json`/`failure_reason`, added this session). n cannot be raised
+by drafting more letters or grading more items; the whole point is to
+re-examine what these 27 specific verdicts actually said, not to gather a
+larger sample.
+
+**Published regardless of outcome, including if (d) is large.** If most of
+the 27 items' unsupported assertions turn out to be genuine grader errors on
+content squarely inside the seven fields, that is reported as the finding,
+not softened or re-run.
+
+**Status:** PRE-REGISTERED. Awaiting go-ahead. Blocked pending budget-window
+confirmation — see this session's budget-check note (offline reasoning only,
+no live check performed): the account was still failing the majority of
+grading calls as of 23:20 IST tonight (the end of the n=45 run), and Groq's
+TPD limit behaves as a rolling window, not a fixed daily reset (inferred from
+a variably-sized `retry-after` on an earlier 429, not a documented reset
+clock) — so there is no single confirmable "reset time" to wait for, and no
+zero-cost way to check remaining headroom. Default assumption is NOT reset
+until a live check (which costs a request) says otherwise.
+
+## 2026-09-04 — Documentation-only pass closing Track 02 clauses 2 and 8
+
+**Decision:** Closed the two PARTIALLY MET clauses from the Track 02 audit —
+clause 2 (self-classification) and clause 8 (India context) — with wording
+changes only, across `README.md` and `CALIBRATION.md`. No code touched, no
+test touched, no recorded number changed.
+
+Specifically:
+- `README.md`'s opening now states in one sentence that this is an
+  auto-responder for one class of merchant loss (fraud-reason-code
+  chargebacks), using the problem statement's own category word.
+- A new "Track 02 requirements" table near the top of `README.md` points a
+  judge at the section evidencing each of: working end-to-end command,
+  single loss class, precision and recall, held-out test set,
+  false-positive cost, defense-only posture, India context. It links to
+  existing sections and restates no number.
+- `README.md` now references `CALIBRATION.md` at two points where the ₹400
+  configured cost is discussed (the Limits section's "Operating point" and
+  "Review cost" paragraphs) — `CALIBRATION.md` had zero incoming references
+  from `README.md` before this entry, despite being the provenance record
+  for every generator parameter with a real-world analogue.
+- RBI's FY2024-25 Annual Report figures (13,516 card/internet fraud cases,
+  ₹520 crore, down from the FY2023-24 peak of 29,082 cases / ₹1,457 crore)
+  were added to `README.md`'s motivation paragraph as problem context only —
+  incidence is declining, not rising, and the wording says so; the real
+  point this system addresses is the fixed per-dispute handling cost, not
+  fraud volume. The same source is recorded in `CALIBRATION.md` under a new
+  "Problem context (not calibration targets)" heading, explicitly separated
+  from the scored rows, because this generator has no transaction-population
+  base rate to check the RBI figure against — filing it as a calibration row
+  would be false.
+- The RuPay reason-code gap, previously stated only in `GENERATOR.md`§8, now
+  also appears verbatim in `README.md`'s Limits section, so a judge finds it
+  disclosed rather than discovered.
+- A placeholder heading for the grounding-gate measurement result was added
+  to `README.md`'s Limits section, deliberately left without a number — that
+  measurement (see the pre-registered diagnostic re-grade immediately above
+  this entry) is still in progress.
+
+**Why:** The Track 02 audit marked clauses 2 and 8 PARTIALLY MET on pointer
+and framing grounds, not on missing substance — the self-classification
+sentence, the requirements map, the `CALIBRATION.md` link, and the RuPay
+disclosure were all facts already true of this repo, just not stated where a
+judge would find them. Closing them with wording is the correct fix; nothing
+here required touching `disputedesk/generator/`, `disputedesk/policy/`,
+`disputedesk/model/`, or any test, and CLAUDE.md's own rule against changing
+a recorded number to "improve" it applies here too — this entry adds no new
+number and changes none of the ones already recorded.
+
+**Caveats:** This is a documentation pass only. It does not run a new eval
+harness, does not make an API call, and does not touch the RuPay gap itself
+(still open, still undecided — a real fix would mean sourcing a RuPay fraud
+reason code, not writing about its absence). The grounding-gate measurement
+placeholder in `README.md`'s Limits section is intentionally empty; filling
+it in is separate, future work with its own entry.
+
+**Reproduce:** `make verify` — the full suite (1222 tests) and `ruff check .`
+both pass unchanged after this entry, confirming nothing in
+`disputedesk/generator/`, `disputedesk/policy/`, `disputedesk/model/`, or any
+test drifted. There is no other command to reproduce, since nothing in this
+entry is a computed number — `git diff <parent-commit>..HEAD -- README.md
+CALIBRATION.md DECISIONS.md` shows the exact wording change.
+
+**Status:** DECIDED
+
+## 2026-09-04 — Second pre-registration executed: clean-class re-grade, n=27
+
+Executes the "Second pre-registration: why the clean-class false-flag rate is
+so high" entry above, following the budget window's 00:00 UTC reset. Run
+once, as pre-registered; not repeated.
+
+**Pre-flight checks, before spending anything.** (1) Verdict persistence:
+confirmed active by reading `eval/grounding_eval.py::score_item` directly —
+`ItemScore.assertions_json` (full per-assertion quote/supporting_field/verdict)
+and `failure_reason` are populated on every call, not discarded. This was the
+whole reason for this run; had it not been active, this entry would say so
+and stop. (2) API key: `.env` and the shell's `GROQ_API_KEY` both populated;
+`get_settings()` constructs cleanly. (3) The exact 27 item ids: re-derived
+from `data/eval/n45/grounding_gate_scores.csv` (the original run's output,
+pre-persistence-patch, gitignored but still present locally) — the clean-class
+rows with `gate_failed=False` are `draft_index` 0–11, 13–26, 28 (`d0012` and
+`d0027` failed in the original run for reasons unrelated to budget — isolated
+failures, not part of the contiguous `d0029`–`d0044` budget-exhaustion tail;
+neither set is in this re-grade). Hardcoded into
+`eval/run_grounding_reregrade_clean27.py::PRE_REGISTERED_DRAFT_INDICES` rather
+than re-derived at run time, with a `SystemExit` guard if the corpus ever
+fails to produce exactly these 27 ids — proven against the real committed
+corpus with no network call in
+`tests/test_eval_run_grounding_reregrade_clean27.py`.
+
+**Tokens: before and after.** Before starting: 0 for this run's client (a
+fresh `GroqHttpLLMClient`, `usage_log` starts empty) — there is no zero-cost
+way to query the account's remaining daily budget itself (the same
+"no zero-cost check" note from the pre-registration entry above still holds);
+0 was the only honest answer available. After finishing: **38,412 tokens over
+29 API calls** (21,700 prompt + 16,712 completion) for 27 letters — 27 letters
+needed only 29 calls, not up to 54 (27 × up to 2), meaning 25 of 27 validated
+on the first grader response and only 2 needed the one repair call. **0/27
+grader failures** — every one of the 27 items reached a verdict this time,
+unlike the original run's contiguous budget-exhaustion tail.
+
+**Result: 24/27 flagged this run (88.9%)**, versus 25/27 (92.6%) on the
+identical 27 letters in the original run — a 1-item difference, consistent
+with this session's own documented live-model non-determinism (same prompt,
+same model, not deterministic across calls) rather than any change in the
+letters, prompt, or seed. Neither number is the headline; the categorization
+below is.
+
+**Categorization of all 70 `"unsupported"` assertions**, per the
+pre-registered buckets, manual read disclosed in full:
+
+| item_id | n unsupported | (a) | (b) | (c) | (d) | n contradicted |
+|---|---:|---:|---:|---:|---:|---:|
+| d0000 | 3 | 0 | 3 | 0 | 0 | 1 |
+| d0001 | 2 | 1 | 0 | 1 | 0 | 1 |
+| d0002 | 8 | 3 | 4 | 1 | 0 | 0 |
+| d0003 | 0 | 0 | 0 | 0 | 0 | 0 |
+| d0004 | 1 | 0 | 0 | 1 | 0 | 2 |
+| d0005 | 2 | 1 | 1 | 0 | 0 | 0 |
+| d0006 | 4 | 1 | 0 | 1 | **2** | 0 |
+| d0007 | 2 | 1 | 0 | 1 | 0 | 1 |
+| d0008 | 0 | 0 | 0 | 0 | 0 | 0 |
+| d0009 | 2 | 0 | 2 | 0 | 0 | 4 |
+| d0010 | 1 | 0 | 0 | 1 | 0 | 1 |
+| d0011 | 0 | 0 | 0 | 0 | 0 | 0 |
+| d0013 | 3 | 0 | 2 | 1 | 0 | 0 |
+| d0014 | 2 | 0 | 1 | 1 | 0 | 0 |
+| d0015 | 4 | 2 | 2 | 0 | 0 | 1 |
+| d0016 | 2 | 0 | 2 | 0 | 0 | 3 |
+| d0017 | 1 | 1 | 0 | 0 | 0 | 1 |
+| d0018 | 3 | 2 | 1 | 0 | 0 | 3 |
+| d0019 | 3 | 1 | 2 | 0 | 0 | 2 |
+| d0020 | 5 | 2 | 3 | 0 | 0 | 0 |
+| d0021 | 3 | 0 | 2 | 1 | 0 | 0 |
+| d0022 | 5 | 2 | 3 | 0 | 0 | 0 |
+| d0023 | 2 | 1 | 1 | 0 | 0 | 0 |
+| d0024 | 3 | 2 | 0 | 1 | 0 | 1 |
+| d0025 | 2 | 0 | 2 | 0 | 0 | 0 |
+| d0026 | 4 | 3 | 0 | 1 | 0 | 1 |
+| d0028 | 3 | 1 | 1 | 1 | 0 | 0 |
+| **total** | **70** | **24** | **32** | **12** | **2** | **22** (13 items) |
+
+**Proportions: (a) 24/70 = 34.3%, (b) 32/70 = 45.7%, (c) 12/70 = 17.1%, (d)
+2/70 = 2.9%.** Verified by script against the persisted `assertions_json`,
+not hand-summed (`/tmp/.../categorize.py` this session; the bucket labels
+themselves are the manual read, the arithmetic on top of them is not).
+
+**The two (d) cases, quoted in full — both on `d0006`** (context:
+`avs_match=False`, `cvv_match=False`, `device_fingerprint_known=True`,
+`delivery_confirmed=True`, `prior_order_count=7`):
+- *"the device used for this transaction matches devices on file"* — marked
+  `unsupported`, `supporting_field=None`. The record's own
+  `device_fingerprint_known=True` directly bears on this claim; the correct
+  verdict was `supported` (or arguably `contradicted` if read narrowly), not
+  "no field exists."
+- *"billing address and customer account details are consistent with the
+  merchant's records"* — marked `unsupported`, `supporting_field=None`. The
+  record's `avs_match=False` means the billing address did **not** match; the
+  correct verdict was `contradicted`, not "no field exists." (This one is a
+  double error: wrong on whether a field exists, and — had it said
+  `supported` — would also have been wrong on which way the field cuts. It is
+  still filed under (d), not treated as a third category, because the
+  pre-registration's bucket (d) is defined as "content that IS in one of the
+  seven record fields," which is true here regardless of which of the two
+  correct verdicts the grader should have picked.)
+
+**Categorization method disclosed, borderline calls named rather than
+hidden.** A few quotes name an evidence-document type *and* layer in a
+specific unrecorded fact in the same sentence (e.g. `d0015`'s "Our access
+activity log shows the order placed by the cardholder on 12‑04‑2024" —
+`access_activity_log` is bucket (b), the specific date is arguably also
+bucket (a)). These were filed under whichever bucket the sentence's primary
+noun phrase names first, consistently, not re-litigated per case to produce a
+preferred split. This is a real source of ±a few points of imprecision in the
+(a)/(b) split specifically; it does not move (d), which has no such
+ambiguity, and it does not change the headline conclusion below.
+
+**Additional, not pre-registered: naturally-occurring contradictions in the
+"clean" class.** 13 of the 27 letters contain at least one assertion the
+grader marked `contradicted`, not `unsupported` — the "clean" class was never
+actually clean for these letters. All four letters flagged by eye before this
+run (`draft_index` 4, 9, 15, 24) are confirmed among them; nine more were
+found only by running the grader. Every quoted span, verbatim:
+
+| draft_index | supporting_field | grader's quoted span |
+|---|---|---|
+| 0 | delivery_confirmed | "Proof of service confirms that the service was delivered to the registered address." |
+| 1 | delivery_confirmed | "the service was delivered" |
+| 4 | delivery_confirmed | "service was provided and the transaction was fulfilled" |
+| 4 | delivery_confirmed | "app crash reported was unrelated to the transaction and did not prevent confirmation of delivery" |
+| 7 | delivery_confirmed | "proof of service details the delivery confirmation via the carrier's tracking system, showing the package was delivered to the customer's address" |
+| 9 | prior_order_count | "order was placed by a new device, not linked to any prior customer activity" |
+| 9 | delivery_confirmed | "delivery confirmation indicates the goods were delivered on the same day" |
+| 9 | avs_match | "Billing proof confirms the transaction matched the customer's registered billing address" |
+| 9 | cvv_match | "The CVV and AVS mismatches are likely a result of the customer's card details being captured incorrectly during the transaction" |
+| 10 | delivery_confirmed | "the product was delivered" |
+| 15 | delivery_confirmed | "proof of service shows the item was dispatched and delivered on 14‑04‑2024, evidenced by the carrier's tracking data." |
+| 16 | device_fingerprint_known | "the charge was authorized through the customer's registered device and credentials." |
+| 16 | avs_match | "The billing address and phone number used match the records on file." |
+| 16 | delivery_confirmed | "Shipping records show the product was delivered to the correct address on the agreed date, and the customer's delivery confirmation is attached." |
+| 17 | delivery_confirmed | "item was delivered and the customer confirmed receipt" |
+| 18 | avs_match | "the billing proof shows a valid address" |
+| 18 | device_fingerprint_known | "the access activity log confirms that the customer's device was recognized during purchase" |
+| 18 | delivery_confirmed | "Proof of service documents the delivery of the product on the same day" |
+| 19 | avs_match | "the billing address matched the account's records." |
+| 19 | delivery_confirmed | "Proof of service confirms that the product was shipped and delivered to the correct address on the delivery date." |
+| 24 | delivery_confirmed | "our records show delivery confirmation" |
+| 26 | delivery_confirmed | "The charge was for a completed digital delivery; proof of service shows the item was activated and logged in our system" |
+
+**Why almost all of it is `delivery_confirmed`.** Of the 27 letters, 18 have
+`delivery_confirmed=False` in their record; of those 18, **13 (72.2%)**
+asserted delivery or fulfillment happened anyway. This looks like a property
+of the drafting prompt (`disputedesk/evidence/prompts/explanation_letter_v2.txt`)
+rather than random noise: told to argue the merchant's case and to cite
+`proof_of_service` among the evidence types, the drafting model reaches for a
+delivery claim regardless of whether the record actually supports one. Not
+investigated further this session — the finding is that it happens, not why
+the prompt produces it, and fixing the prompt is new scope this run did not
+authorize.
+
+**Conclusion, per the pre-registration's stated decision rule.** (d) is
+small — 2 of 70 (2.9%). (a)+(b)+(c) account for 97.1% of all flagged
+assertions, and separately, 13 of the 27 "clean" letters were never clean at
+all. Per the rule stated in advance: **the first run's 92.6% (and by
+extension the full n=45 run's 95.6%) was not a false-flag rate. It was the
+gate correctly flagging a corpus that was not clean, plus correctly
+declining to support claims the schema was never given a field for.** The
+gate's discrimination between grounded and ungrounded letters — the
+economically load-bearing question the README's "What is measured is what
+the gate would cost" section already flagged as separate and still open —
+remains untested by this or the original run. Testing it needs a corpus
+drafted under a prompt restricted to `RECORD_FIELDS`-backed claims (so a
+truly clean letter cannot reference an evidence-document name or comms
+content the gate has no field for) and a post-hoc contradiction check before
+any item is labelled clean. Neither exists yet; building them is new scope,
+not done in this session.
+
+**This does not replace the original n=45 run's result.** 43/45 (95.6%,
+95% CP CI [0.849, 0.995]) stands as recorded in the "Second pre-registration"
+entry above. This entry supplements it with why that number cannot be read
+as a false-flag rate, using the same 27 letters plus the corpus-contamination
+finding above; it does not recompute or supersede it.
+
+**How.** `python -m eval.run_grounding_reregrade_clean27` (new script this
+session; the pure item-selection logic — filtering a real, committed corpus
+down to exactly these 27 ids and refusing to proceed on any mismatch — is
+unit-tested with no network call in
+`tests/test_eval_run_grounding_reregrade_clean27.py`; the live grading loop
+itself is untested, per this project's standing convention for scripts that
+call a real LLM). Output written to
+`data/eval/n27_reregrade/grounding_gate_scores_clean27.csv` (gitignored,
+regenerate on demand — but see NUMBERS.md's note that a re-run will not
+reproduce identical verdicts, only the same 27 letters and prompt).
+
+**Status:** CONFIRMED-RAN

@@ -6,6 +6,8 @@ flag (because that is what production does), that "correct" is oriented so
 higher is better on every class, and that the report always carries n.
 """
 
+import json
+
 import numpy as np
 import pytest
 
@@ -33,6 +35,12 @@ GROUNDED = (
     '{"assertions": [{"quote": "q", "supporting_field": "avs_match", "verdict": "supported"}]}'
 )
 UNGROUNDED = '{"assertions": [{"quote": "q", "supporting_field": null, "verdict": "unsupported"}]}'
+MIXED = (
+    '{"assertions": ['
+    '{"quote": "AVS matched", "supporting_field": "avs_match", "verdict": "supported"}, '
+    '{"quote": "tracking 1Z9X4A2210", "supporting_field": null, "verdict": "unsupported"}'
+    "]}"
+)
 
 
 def _item(item_class="clean", text=LETTER) -> CorpusItem:
@@ -68,6 +76,51 @@ class TestScoring:
         scores = score_corpus(items, FakeLLMClient([GROUNDED]))
         assert len(scores) == len(items)
         assert set(scores["item_id"]) == {i.item_id for i in items}
+
+
+class TestVerdictPersistence:
+    """Added 2026-09-03 after a live n=45 run's false-flag rate turned out
+    uninterpretable: `n_assertions` alone cannot say what the grader found
+    unsupported. `assertions_json` must carry every assertion's quote,
+    supporting_field, and verdict - not just the count - and it must survive
+    an actual CSV round-trip, since that is exactly how the prior run's data
+    was lost."""
+
+    def test_every_assertion_is_persisted_with_its_full_verdict(self):
+        score = score_item(_item(), FakeLLMClient([MIXED]))
+        assertions = json.loads(score.assertions_json)
+        assert assertions == [
+            {"quote": "AVS matched", "supporting_field": "avs_match", "verdict": "supported"},
+            {"quote": "tracking 1Z9X4A2210", "supporting_field": None, "verdict": "unsupported"},
+        ]
+        assert score.n_assertions == 2
+
+    def test_a_failed_grade_persists_an_empty_list_and_a_failure_reason(self):
+        score = score_item(_item(), FakeLLMClient(["not json"]))
+        assert json.loads(score.assertions_json) == []
+        assert score.failure_reason is not None
+
+    def test_a_successful_grade_has_no_failure_reason(self):
+        score = score_item(_item(), FakeLLMClient([GROUNDED]))
+        assert score.failure_reason is None
+
+    def test_assertions_survive_an_actual_csv_round_trip(self, tmp_path):
+        """The exact bug that made the n=45 run's result uninterpretable:
+        the verdict has to still be there after `to_csv`/`read_csv`, not
+        just in the in-memory DataFrame."""
+        import pandas as pd
+
+        items = build_corpus([(LETTER, CONTEXT)], seed=0)
+        scores = score_corpus(items, FakeLLMClient([MIXED]))
+        path = tmp_path / "scores.csv"
+        scores.to_csv(path, index=False)
+
+        reloaded = pd.read_csv(path)
+        assertions = json.loads(reloaded.iloc[0]["assertions_json"])
+        assert assertions == [
+            {"quote": "AVS matched", "supporting_field": "avs_match", "verdict": "supported"},
+            {"quote": "tracking 1Z9X4A2210", "supporting_field": None, "verdict": "unsupported"},
+        ]
 
 
 class TestOrientation:

@@ -25,7 +25,7 @@ from eval.grounding_corpus import (
     make_unrecorded,
     mentioned_fields,
 )
-from eval.grounding_stats import paired_comparison, wilson
+from eval.grounding_stats import clopper_pearson, paired_comparison, wilson
 
 CONTEXT = DisputeContext(
     reason_code="MC_4837",
@@ -168,3 +168,44 @@ class TestIntervals:
     def test_mismatched_arm_lengths_raise(self):
         with pytest.raises(ValueError, match="same length"):
             paired_comparison("bad", np.array([True]), np.array([True, False]))
+
+
+class TestClopperPearson:
+    def test_stays_inside_the_unit_interval_at_the_boundary(self):
+        for numerator in (0, 45):
+            rate = clopper_pearson(numerator, 45, "edge")
+            assert 0.0 <= rate.ci_low <= rate.ci_high <= 1.0
+
+    def test_zero_events_gives_a_lower_bound_of_exactly_zero(self):
+        rate = clopper_pearson(0, 45, "zero")
+        assert rate.ci_low == 0.0
+        assert rate.ci_high > 0.0
+
+    def test_all_events_gives_an_upper_bound_of_exactly_one(self):
+        rate = clopper_pearson(45, 45, "all")
+        assert rate.ci_high == 1.0
+        assert rate.ci_low < 1.0
+
+    def test_matches_scipy_binomtest_exact_ci(self):
+        """Cross-checked against a second, independent scipy code path
+        (`binomtest(...).proportion_ci(method="exact")`), not just this
+        module's own Beta-quantile construction re-run on itself."""
+        from scipy.stats import binomtest
+
+        expected = binomtest(6, 120).proportion_ci(confidence_level=0.95, method="exact")
+        rate = clopper_pearson(6, 120, "known")
+        assert rate.ci_low == pytest.approx(expected.low)
+        assert rate.ci_high == pytest.approx(expected.high)
+
+    def test_is_wider_than_wilson_at_small_n(self):
+        """The documented trade at small n: exact coverage costs width."""
+        cp = clopper_pearson(2, 45, "cp")
+        w = wilson(2, 45, "wilson")
+        assert cp.ci_low <= w.ci_low
+        assert cp.ci_high >= w.ci_high
+
+    def test_str_labels_itself_clopper_pearson_not_wilson(self):
+        """Rate.__str__ must not mislabel a Clopper-Pearson interval as
+        Wilson - both functions build the same Rate class."""
+        assert "Clopper-Pearson CI" in str(clopper_pearson(6, 120, "cp"))
+        assert "Wilson CI" in str(wilson(6, 120, "w"))

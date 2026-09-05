@@ -4,6 +4,11 @@ Razorpay AI Buildathon, Track 02 (AI Risk Manager). One loss class:
 **fraud-reason-code chargebacks** (the four confirmed card-network codes in
 `GENERATOR.md` §8 — `MC_4837`, `MC_4840`, `VISA_10_4`, `AMEX_FR2`).
 
+This is an auto-responder for one class of merchant loss: fraud-reason-code
+chargebacks. It scores each dispute's win probability, decides contest /
+accept / escalate on expected value, assembles an evidence packet, and files
+it — with a grounding gate that can withhold but never submit.
+
 A merchant today either contests every fraud-reason-code chargeback it
 receives (burning analyst time and accruing excessive-representment
 exposure on network dispute-ratio programs) or accepts every one of them
@@ -16,6 +21,27 @@ customer's free-text message, and grounding the letter against the dispute
 record before anything is allowed to leave the system), validates it against
 a schema, and writes an append-only audit row explaining the decision end to
 end.
+
+RBI's FY2024-25 Annual Report records 13,516 card and internet fraud cases
+worth ₹520 crore, down from the FY2023-24 peak of 29,082 cases and ₹1,457
+crore. The problem this system addresses is not rising volume — it is that
+each dispute carries a fixed handling cost the merchant pays whether or not
+it contests, so the loss is asymmetric and largely invisible in aggregate.
+
+## Track 02 requirements
+
+Dry pointer table, not a restatement — the numbers live at each link, not
+here.
+
+| Requirement | Where it's evidenced |
+|---|---|
+| Working end-to-end command | [Running the demo from a clean clone](#running-the-demo-from-a-clean-clone) |
+| Single loss class | Stated above (fraud-reason-code chargebacks); `CLAUDE.md` invariant fixes it as one loss class |
+| Precision and recall | [Headline numbers](#headline-numbers) — "Policy precision/recall" table |
+| Held-out test set | [Headline numbers](#headline-numbers) — temporal holdout only, never the training split |
+| False-positive cost | [Headline numbers](#headline-numbers) — "False-positive / false-negative cost" table |
+| Defense-only posture | [What we did not build, and why](#what-we-did-not-build-and-why); `CLAUDE.md` invariant 5 |
+| India context | [Limits](#limits) (RuPay gap); `CALIBRATION.md` (RBI problem context, not a calibration target) |
 
 **What it does, and what remains unverified about it.** The `accept` call
 goes through — Razorpay's `accept` endpoint needs nothing beyond a dispute
@@ -90,7 +116,9 @@ below ₹200** per representment (the 95% CI includes zero at ₹0, ₹100, and
 ₹150; it is measurably *negative* at ₹50). The advantage becomes measurable
 at ₹200 and grows from there — by ₹2,000 it is +685,586/1,000, by ₹10,000
 it is +7,555,900/1,000. The configured ₹400 sits just above the threshold
-where the effect appears, not deep inside the regime where it is robust.
+where the effect appears, not deep inside the regime where it is robust —
+its provenance against published Indian gateway fee ranges is in
+`CALIBRATION.md`.
 
 **Contest threshold.** The contest decision was not retrofitted to be
 cost-sensitive. `decide()` has computed `expected_value = p_win * amount -
@@ -152,7 +180,8 @@ filed and charges nothing for the human time that isn't. Solving for the
 review cost that exactly cancels the ₹400 advantage gives **≈₹200 per
 human-touched dispute** — against the **₹150** of analyst time
 `disputedesk/policy/config.py` already budgets per *contested* dispute
-alone, before a review is added on top. Put the other way: the sweep
+alone (`CALIBRATION.md` has this figure's provenance against published
+analyst-pay data), before a review is added on top. Put the other way: the sweep
 overstates the advantage by **200.5%** at the configured cost (22,475/1,000
 of overstatement against an 11,210/1,000 reported advantage); charge that
 back and the policy trails baseline A by **−11,265/1,000**, not leads it.
@@ -174,6 +203,54 @@ and **0.45×** at the configured ₹400 (where it has flipped — the policy now
 wins bigger, not just more often). A majority of seeds improving is not the
 same as the expected value improving, and at ₹50 those two readings
 disagree.
+
+**RuPay reason-code gap.** RuPay, India's domestic card network, has no
+confirmed fraud reason code in this system. For an India-facing gateway
+that is a substantive gap, not a cosmetic one; it is left open rather than
+guessed at, because inventing a reason code would put an unsourced value
+into the generator. (Full detail: `GENERATOR.md`§8.)
+
+**Grounding-gate measurement: the clean class was contaminated, so the first
+measurement did not test discrimination.** A pre-registered re-grade of the
+27 clean-class letters that received a verdict in the original n=45 run (see
+"The grounding gate is unmeasured" above) persisted every assertion's quote,
+supporting field, and verdict — the original run discarded that content,
+which is why its 92.6% (25/27) flagged rate on these same 27 letters could
+not be interpreted. Categorizing all 70 assertions the grader marked
+`"unsupported"`: **24 (34.3%)** named a fact `RECORD_FIELDS` has no entry for
+at all (an IP address, a shipping-address history, a cart-value history);
+**32 (45.7%)** named one of the four evidence-document types the drafting
+prompt explicitly tells the model to cite, which `RECORD_FIELDS` does not
+contain; **12 (17.1%)** described customer-communication content, also
+outside `RECORD_FIELDS`; only **2 (2.9%)** were content actually present in a
+record field the grader failed to recognize (both on one letter, `d0006`:
+the record's `device_fingerprint_known=True` and `avs_match=False` each
+directly bore on a claim the grader called unsupported instead) — a genuine
+grader error, and a small one. Full per-item breakdown: `DECISIONS.md`'s
+2026-09-04 entry.
+
+Separately — **not pre-registered, a descriptive finding** — 13 of these 27
+"clean" letters (48.1%) contained an assertion the grader marked
+`"contradicted"`, not merely unsupported: the drafting model asserted
+delivery or fulfillment happened even where the record's own
+`delivery_confirmed` was `False`, in 13 of the 18 letters where that field
+was false (72.2%). The four letters flagged by eye before this run
+(`draft_index` 4, 9, 15, 24) are all in that 13; nine more were found only by
+running the grader.
+
+**What this does and does not establish.** It does not establish that the
+gate discriminates between grounded and ungrounded letters — that question
+remains untested on this evidence. What it establishes is why the earlier
+92.6%/95.6% flagged rates cannot be read as a false-flag rate: almost every
+flag traces either to a letter that was never actually clean (a naturally
+occurring contradiction the drafting model introduced on its own) or to a
+claim the schema was never given a field to support (an evidence-document
+name or comms content the drafter is explicitly told to cite). Testing
+discrimination properly would need two things neither exists yet: a corpus
+drafted under a prompt restricted to `RECORD_FIELDS`-backed claims only (so a
+clean letter cannot reference an evidence-document name or comms content the
+gate has no field for), and a post-hoc contradiction check on every item
+labelled clean before it is scored as clean.
 
 **Every rupee figure above is contingent on a submission path never
 exercised in production.** As of the 2026-09-04 scoped reopening, the
@@ -226,6 +303,26 @@ economic argument above (the 2.3% budget, the escalate rate alone exhausting
 it at ₹200) does not depend on this measurement and stands regardless of when
 or whether it runs; the gate's own false-flag rate is a separate, still-open
 question.
+
+**The gate's schema is narrower than the drafter's inputs.** `RECORD_FIELDS`
+(`disputedesk/evidence/grounding.py`) is exactly the seven `DisputeContext`
+fields — `reason_code`, `amount`, `avs_match`, `cvv_match`,
+`device_fingerprint_known`, `delivery_confirmed`, `prior_order_count` — and
+nothing else. But the letter-drafting prompt
+(`disputedesk/evidence/prompts/explanation_letter_v2.txt`) explicitly hands
+the drafting model two things `RECORD_FIELDS` has no entry for: the four
+evidence-document names it is told to cite (`billing_proof`,
+`access_activity_log`, `proof_of_service`, `customer_communication` —
+`disputedesk/evidence/reason_code_map.py`), and the customer's own message
+(`comms_summary`/`comms_tone`, from `normalize_communication_log`). A letter
+that mentions either — which the drafting prompt asks it to do — has no
+record field the grounding gate can cite as support, regardless of whether
+the underlying claim is true. The gate is being asked to audit letters
+against a schema strictly narrower than the inputs the drafter was given.
+Found while diagnosing this session's grounding-gate measurement
+(`DECISIONS.md`'s 2026-09-03 entries). Not fixed here: changing
+`RECORD_FIELDS` changes the gate's behaviour, and that behaviour could not be
+re-verified before the deadline.
 
 ## The LLM authority boundary
 

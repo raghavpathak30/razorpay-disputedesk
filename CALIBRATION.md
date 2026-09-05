@@ -125,3 +125,19 @@ Nothing above changes the generator. The friendly-fraud share is recorded as
 outside its published range and left as-is, per CLAUDE.md rule 5 and this
 session's standing rules — a limit worth stating in the README, not a defect
 to quietly correct by retuning `true_fraud_rate_month0`/`true_fraud_rate_month_last`.
+
+---
+
+## Problem context (not calibration targets)
+
+Sources listed here ground no generator parameter and score against no
+row above. They exist only to state the real-world problem this system
+addresses; filing either as a calibration target would be false, because
+this generator has no transaction-population base rate to compare against.
+
+| | |
+|---|---|
+| **Source** | RBI Annual Report FY2024-25 [regulator]. |
+| **What it says** | 13,516 card and internet fraud cases worth ₹520 crore, down from the FY2023-24 peak of 29,082 cases and ₹1,457 crore. Incidence declined year over year. |
+| **Why it is not a calibration row** | This generator has no transaction-volume or population-level fraud-incidence field to compare against (see row 1, "Chargeback base rate" — same reason that row is N/A). Filing this as a calibration target would imply a comparison this generator cannot support. |
+| **What it is used for** | Problem-context framing only, in `README.md`'s opening: the loss this system addresses is not rising fraud volume, but the fixed handling cost a merchant pays per dispute regardless of contest outcome. |
