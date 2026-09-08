@@ -3961,3 +3961,151 @@ regenerate on demand — but see NUMBERS.md's note that a re-run will not
 reproduce identical verdicts, only the same 27 letters and prompt).
 
 **Status:** CONFIRMED-RAN
+
+---
+
+## 2026-09-08 — Constrained decoding replaces repair-retry for the drafting call
+
+**What changed.** `disputedesk/evidence/draft_letter.py`'s drafting call now
+passes `response_format` (a JSON schema derived from `ExplanationLetterOutput`)
+and `repair=False` to `validated_call.call_llm_and_validate` - output is
+constrained at the sampling layer via Groq structured outputs instead of
+retried with a repair prompt on a malformed first response
+(`PROMPT_VERSION == "explanation_letter_v4"`). Verified live against
+`openai/gpt-oss-20b` before this shipped (throwaway smoke script, not
+committed): HTTP 200, schema accepted, output validated against
+`ExplanationLetterOutput` with zero repairs. `normalize_comms.py` and
+`grounding.py` are unaffected - both call `call_llm_and_validate` with neither
+argument, so both keep today's exact repair behaviour
+(`tests/test_evidence_validated_call.py` pins the default-args path
+unchanged).
+
+**Consequence for `eval/llm_letter_validation_reliability.py`.** This script's
+whole purpose is measuring the drafting call's repair rate. With
+`repair=False` permanent for that call, `DraftAttemptRecord.repair_attempted`
+can never be `True` again, so the two tests that exercised a successful and a
+failed repair (`test_repair_succeeds_after_a_bad_first_draft`,
+`test_repair_also_fails_falls_back_to_template`) asserted a code path that no
+longer executes and were deleted. `repair_attempted`/`repair_succeeded`/
+`repair_error` were **kept** on `DraftAttemptRecord`, not removed - they will
+read `False`/`None`/`None` on every `v4`-and-later run, which lets a future
+comparison read a `v3` run's repair-rate numbers (DECISIONS.md's 2026-09-01
+entries) side by side with a `v4` run's zero, rather than losing the field
+that made that comparison possible.
+
+**Status:** DECIDED.
+
+---
+
+## 2026-09-08 — Token usage recorded as side columns, not folded into the hash chain
+
+**Decision:** `prompt_tokens`/`completion_tokens`/`cached_tokens` are added to
+`decisions` (`disputedesk/audit/models.py`) as nullable side columns, outside
+`chain_payload()` - option (b) of the two laid out for this phase, not option
+(a) (hashed payload + `schema_version` bump).
+
+**Why.** The hash chain's job is proving the *decision content* - the letter,
+the grounding verdict, the policy branch, the feature vector a reviewer would
+reconstruct the decision from - has not been tampered with after the fact.
+Token counts are observability metadata about *how* the decision was
+produced, not part of the decision itself: two runs that drafted the same
+letter under the same facts and reached the same policy branch are the same
+decision regardless of whether one of them hit a warm cache. Folding token
+counts into the hashed payload would make every future chain verification
+depend on token-accounting plumbing that has nothing to do with what is being
+audited, and would force a `schema_version` fork - every row before this
+change would need to be re-hashed under an old-schema code path forever, just
+to accommodate a field unrelated to the thing the chain protects. Side
+columns keep the hash chain's meaning exactly what it was and need no version
+bump, no backfill, and no re-verification of any existing row.
+
+**Implementation.** Columns are nullable: a decision that made no LLM call at
+all (ACCEPT/ESCALATE, or an unrecognised reason code) stores `NULL` in all
+three, not a fabricated `0`, so "no call happened" and "a call happened and
+used zero tokens" stay distinguishable
+(`disputedesk/api/pipeline.py::_EvidenceOutcome`). Populated from every call
+made while assembling one dispute's evidence - normalize, draft, and
+grounding alike, not just the drafting call
+(`disputedesk/api/pipeline.py::_summed_token_usage`, summing
+`LLMClient.usage_log`, now a declared member of the `LLMClient` Protocol
+itself so the pipeline can read it without depending on the concrete Groq
+implementation). `cached_tokens` reads 0 whether Groq's response omits
+`prompt_tokens_details` entirely or sends it with an explicit `null` -
+unlike `reasoning_tokens`, which stays diagnostic-only and keeps reading
+`None` on absence, `cached_tokens` is summed into a persisted column, where a
+stray `None` would break the sum
+(`disputedesk/evidence/llm.py::GroqHttpLLMClient._record_usage`).
+
+**No `disputedesk.db` file exists in this environment yet** (checked before
+implementing) - there is nothing to migrate; the next `init_db()` call
+creates the `decisions` table with these columns from scratch via
+`Base.metadata.create_all()`. There is no Alembic or other migration tool in
+this project; a real deployment with an existing database would need a
+hand-written `ALTER TABLE ... ADD COLUMN` (nullable, so safe against existing
+rows) before upgrading - out of scope today since no such database exists.
+
+**Tests.** `tests/test_audit_append_only.py` gained a new section proving:
+token columns never appear in `chain_payload()`; two rows identical in every
+business field but differing only in token counts hash identically; and a
+row written with no token kwargs (simulating a pre-this-change row) and a row
+written with real token counts coexist in the same chain and both verify.
+
+**Status:** DECIDED.
+
+---
+
+## 2026-09-08 — CORRECTION: `_STATIC_PREFIX` is 470 tokens, not 399; Groq's cacheable-prefix minimum checked live and empirically bounded
+
+**Corrects:** the 2026-09-07/08 token-count measurement of
+`disputedesk/evidence/draft_letter.py::_STATIC_PREFIX`, reported in this
+session as 399 tokens (`tiktoken`, `cl100k_base`/`o200k_base`).
+
+**Why it changed.** That number was an estimate: `gpt-oss-20b`'s real
+tokenizer (`o200k_harmony`) is not published as a `tiktoken` encoding, so
+`o200k_base`/`cl100k_base` were used as the closest available proxies. Groq's
+own `usage.prompt_tokens` for a request whose entire content is
+`_STATIC_PREFIX` (no dynamic tail) reports **470 tokens** - the authoritative
+number for this model, measured live rather than approximated. The old
+399-token figure stays visible in this session's earlier discussion; this
+entry is the correction, per this file's own append-only convention.
+
+**Groq's published cacheable-prefix minimum, checked live
+(console.groq.com/docs/prompt-caching, fetched 2026-09-08, not from cached
+knowledge):** "The minimum cacheable prompt length varies by model, ranging
+from 128 to 1024 tokens depending on the specific model used." No
+`openai/gpt-oss-20b`-specific number is published. Caching is automatic
+(no opt-in), cannot be disabled, and a hit is reported via
+`usage.prompt_tokens_details.cached_tokens`. The docs explicitly state "Cache
+hits are not guaranteed."
+
+**Empirical test, live (2026-09-08):** `_STATIC_PREFIX` (470 tokens, no
+dynamic tail) sent twice back to back through `GroqHttpLLMClient`, same
+process, same run:
+
+| | call 1 | call 2 |
+|---|---|---|
+| prompt_tokens | 470 | 470 |
+| cached_tokens | 0 | 0 |
+
+Identical content, sent twice, immediately, is the most cache-favorable case
+this system can construct - no dynamic content, no elapsed time near the
+~2-hour TTL, byte-for-byte equal on both calls. A miss here, combined with
+the earlier full-drafting-call result (`cached_tokens: 0` twice, `eval/
+run_prompt_caching_verification.py`, `_STATIC_PREFIX` + dynamic tail =
+973 prompt_tokens), is near-conclusive: **470 tokens sits under
+`openai/gpt-oss-20b`'s real minimum cacheable-prefix length on Groq**,
+independent of the published 128-1024 range and independent of the earlier
+399-token estimate this entry corrects.
+
+**Decision on authoring new static content (reason-code guidance, few-shot
+examples) to push `_STATIC_PREFIX` past the threshold:** deferred, not done.
+The real threshold is bounded below (>470) but not pinned - it could be
+anywhere up to 1024 per Groq's stated range - and none of that content exists
+in this system today (Phase 0 recon: zero few-shot examples, no per-reason-
+code prose, confirmed 2026-09-07). Authoring it speculatively, without
+knowing how far past 470 is enough, risks real letter-quality effort for an
+unconfirmed payoff, and Groq's own "not guaranteed" caveat means even
+clearing a token threshold would not guarantee a hit. Left as an open Day 2+
+question, not resolved here.
+
+**Status:** DECIDED (correction); threshold-authoring question OPEN.
