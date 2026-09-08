@@ -24,6 +24,15 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.5",
 ]
+# CLAUDE.md Day-2 grounding-gate cascade stage 2
+# (`disputedesk/evidence/minicheck.py`). Optional: nothing in the main
+# `dependencies` list or the production pipeline requires this - it is a new,
+# independently-testable path, not a default one. CPU build on this project's
+# dev machine (no CUDA toolkit installed); see DECISIONS.md's 2026-09-08
+# entry for the GGUF/CPU-vs-CUDA choice.
+minicheck = [
+    "llama-cpp-python>=0.3.35",
+]
 
 [build-system]
 requires = ["hatchling"]
