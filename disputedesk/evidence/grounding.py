@@ -12,8 +12,8 @@ Two failure classes, and only the second justifies a model here:
 
 - **Contradiction** - the letter asserts something a record field denies.
   Enumerable, and a deterministic field-matcher handles it
-  (`eval/grounding_baseline.py` is that matcher, and is the baseline this
-  gate is measured against).
+  (`disputedesk/evidence/grounding_baseline.py` is that matcher, and is the
+  baseline this gate is measured against).
 - **Unrecorded assertion** - the letter asserts a fact the record has no
   field for *at all*. A deterministic checker validates the fields it
   enumerates; it cannot enumerate what the model invented, because the set of

@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from disputedesk.evidence.context import DisputeContext
-from eval.grounding_baseline import (
+from disputedesk.evidence.grounding_baseline import (
     baseline_findings,
     baseline_flags,
     field_contradictions,

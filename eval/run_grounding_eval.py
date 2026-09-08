@@ -17,8 +17,8 @@ import pandas as pd
 
 from disputedesk.evidence.context import DisputeContext
 from disputedesk.evidence.grounding import PROMPT_VERSION
+from disputedesk.evidence.grounding_baseline import baseline_flags
 from disputedesk.evidence.llm import GroqHttpLLMClient
-from eval.grounding_baseline import baseline_flags
 from eval.grounding_corpus import build_corpus, composition
 from eval.grounding_eval import report, score_corpus
 from eval.grounding_stats import wilson

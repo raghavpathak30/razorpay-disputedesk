@@ -13,22 +13,23 @@ different tasks and pooling would let the easy one carry the hard one:
 - **Class B - unrecorded assertion.** A sentence asserting a fact no record
   field covers is inserted into the letter. The ground truth is the insertion.
   These templates are authored, so their difficulty is a choice - see the
-  disclosure below and in `eval/grounding_baseline.py`.
+  disclosure below and in `disputedesk/evidence/grounding_baseline.py`.
 
 **The README's claim rests on Class B.** Class A is reported to show the gate
 does not lose to the baseline on the easy half, not to support the claim.
 
 **Class A field selection is deliberately not the baseline's own matcher.**
 `_MENTIONS` below is an independent, simpler topic list. Selecting the field
-to flip with `eval.grounding_baseline._FIELD_TOPICS` would make the baseline's
-topic-match step true by construction on every Class A item, turning half its
-score into an identity rather than a measurement.
+to flip with `disputedesk.evidence.grounding_baseline._FIELD_TOPICS` would
+make the baseline's topic-match step true by construction on every Class A
+item, turning half its score into an identity rather than a measurement.
 
 **Authorship disclosure.** The insertion templates, the baseline's patterns
-and the gate's prompt were authored by the same person in the same session.
-The templates are committed verbatim below and their composition is published
-in the README so a reader can judge the difficulty. Nothing here was edited
-after seeing a score; the corpus is built from a fixed seed and pinned by
+(`disputedesk/evidence/grounding_baseline.py`) and the gate's prompt were
+authored by the same person in the same session. The templates are committed
+verbatim below and their composition is published in the README so a reader
+can judge the difficulty. Nothing here was edited after seeing a score; the
+corpus is built from a fixed seed and pinned by
 `tests/test_eval_grounding_corpus.py`.
 
 No LLM. No network. The drafted letters this operates on come from a committed

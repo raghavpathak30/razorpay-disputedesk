@@ -24,8 +24,8 @@ from dataclasses import dataclass
 import pandas as pd
 
 from disputedesk.evidence.grounding import grade_letter
+from disputedesk.evidence.grounding_baseline import baseline_flags
 from disputedesk.evidence.llm import LLMClient
-from eval.grounding_baseline import baseline_flags
 from eval.grounding_corpus import CorpusItem, composition
 from eval.grounding_stats import PairedComparison, paired_comparison, wilson
 from eval.review_cost import budget_verdict
