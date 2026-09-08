@@ -110,6 +110,19 @@ class DecisionRecord(ChainedRecord, Base):
     completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # CLAUDE.md Day-2 grounding-gate cascade: which sentence MiniCheck
+    # (`disputedesk/evidence/grounding_cascade.py`) withheld a letter for,
+    # and its score - not just a boolean. Same pattern as the token columns
+    # above: nullable, additive, deliberately outside `chain_payload()`
+    # below. Both are NULL when the cascade never ran for this dispute (the
+    # cascade is not wired into the production pipeline yet - see
+    # DECISIONS.md's 2026-09-08 entry), when it ran and nothing was
+    # withheld, or when a stage-1 (deterministic) finding withheld the
+    # letter before MiniCheck was ever consulted - `validation_result`/
+    # `CascadeGateResult.failure_reason` carry those cases already.
+    minicheck_withheld_sentence: Mapped[str | None] = mapped_column(String, nullable=True)
+    minicheck_withheld_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     def chain_payload(self) -> dict:
         return {
             "dispute_id": self.dispute_id,

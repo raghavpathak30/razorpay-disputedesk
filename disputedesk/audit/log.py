@@ -79,6 +79,8 @@ def record_decision(
     prompt_tokens: int | None = None,
     completion_tokens: int | None = None,
     cached_tokens: int | None = None,
+    minicheck_withheld_sentence: str | None = None,
+    minicheck_withheld_score: float | None = None,
 ) -> tuple[DecisionRecord, bool]:
     """Insert one decision row before the Razorpay API is ever touched
     (PHASES.md Phase 4 item 3). Returns `(row, was_newly_created)`.
@@ -90,7 +92,8 @@ def record_decision(
     `prompt_tokens`/`completion_tokens`/`cached_tokens` default to `None`
     (CLAUDE.md Day-1 Phase 3: side columns, outside the hash chain - see
     `disputedesk/audit/models.py`) so every existing caller that doesn't pass
-    them keeps working unchanged.
+    them keeps working unchanged. `minicheck_withheld_sentence`/
+    `minicheck_withheld_score` are the same pattern, added CLAUDE.md Day-2.
     """
     existing = get_decision(session, dispute_id)
     if existing is not None:
@@ -113,6 +116,8 @@ def record_decision(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         cached_tokens=cached_tokens,
+        minicheck_withheld_sentence=minicheck_withheld_sentence,
+        minicheck_withheld_score=minicheck_withheld_score,
     )
     return _insert_chained(session, row, lambda: get_decision(session, dispute_id))
 
