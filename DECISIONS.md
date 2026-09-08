@@ -4109,3 +4109,156 @@ clearing a token threshold would not guarantee a hit. Left as an open Day 2+
 question, not resolved here.
 
 **Status:** DECIDED (correction); threshold-authoring question OPEN.
+
+---
+
+## 2026-09-08 — Grounding-gate cascade (Day 2): MiniCheck as stage 2, and a stage-1 gap found while building it
+
+**What this entry covers.** `disputedesk/evidence/grounding_cascade.py`
+(new), `disputedesk/evidence/minicheck.py` (new),
+`disputedesk/evidence/grounding_baseline.py` (moved from `eval/`, and
+extended), and a new nullable pair of columns on `DecisionRecord`. None of
+this replaces or is called by `disputedesk/evidence/grounding.py`'s
+Groq-based `apply_grounding_gate` - that remains the production gate,
+untouched, because Day 6 needs it intact as the comparison baseline. This is
+a second, independently-testable path.
+
+### The gap: stage 1 had no way to ever pass a sentence
+
+While designing the cascade (deterministic matcher first, MiniCheck second,
+"fail closed on what's left"), a concrete question came up: does
+`numeric_contradictions` register `"The customer has placed 3 prior orders
+with us."` as a confirmed match when `prior_order_count == 3`, or does it
+stay silent and let the sentence fall through to MiniCheck to guess at?
+
+Checked directly:
+
+```
+numeric_contradictions(sentence, ctx_with_count_3)  -> []
+numeric_contradictions(sentence, ctx_with_count_7)  -> [contradiction]   # control: the regex does fire
+numeric_contradictions("unrelated sentence", ctx)   -> []
+```
+
+The exact-match case and the totally-unrelated sentence returned the
+byte-identical `[]`. `field_contradictions`/`numeric_contradictions`/
+`baseline_findings` only ever emit a `"contradiction"` (or `"unrecorded"`)
+finding - there was no `"confirmed"` finding type anywhere in the module.
+"Checked and agrees" and "nothing here to check" were indistinguishable.
+
+**Why this mattered, not just as a tuning gap.** The Phase 1 smoke test
+(MiniCheck alone, no cascade) scored six hand-written sentences; five were
+confidently right (0.82-0.88 for grounded, 0.03-0.17 for fabricated) and one
+was a near-coin-flip: `"The customer has placed 3 prior orders with us."`
+scored **0.490** - below a 0.5 pass line, on a claim that was true. That
+sentence is exactly the claim class (`field_contradictions`/
+`numeric_contradictions`'s own module docstring: "the field-matcher is the
+part a deterministic checker is naturally good at") the baseline was
+supposed to own. Without a pass signal at stage 1, every sentence the
+baseline didn't outright contradict - including ones it could already
+resolve with total confidence - fell through to MiniCheck, making it the
+sole and final authority on precisely the claim type it was weakest on. No
+MiniCheck threshold fixes a coin flip; the fix had to be architectural.
+
+### The fix: `field_confirmations`/`numeric_confirmations`, scoped narrowly
+
+Added to `grounding_baseline.py`, mirroring `field_contradictions`/
+`numeric_contradictions` exactly - same topic regex, same extraction, same
+negation-polarity logic, comparison flipped from `!=` to `==`. Scoped to
+only the fields the baseline already checks with a confident exact-match
+regex: the four booleans (`avs_match`, `cvv_match`,
+`device_fingerprint_known`, `delivery_confirmed`) and the two numerics
+(`amount`, `prior_order_count`).
+
+**Deliberately not extended to `unrecorded_entities`'s shapes** (tracking
+numbers, signatures, phone/email contact, dates, IP/login, named people).
+Those are fuzzy/entity-level pattern hits, not field lookups - a regex
+matching "this looks like a tracking number" has no notion of "and it's the
+*correct* tracking number" to confirm against, because the record has no
+field for that fact at all (that is the entire reason Class B exists as a
+category). Confirming there would mean treating "no fixed-shape regex fired"
+as evidence of truth, which is a much weaker claim than "this exact field
+value matches the record" and belongs nowhere near a fail-closed gate.
+Sentences hitting these shapes, and everything with no baseline signal at
+all, still fall through to MiniCheck exactly as originally planned.
+
+**Deliberately excluded from `baseline_findings`/`baseline_flags`.** Those
+two functions back the already-published n45/clean27 eval numbers
+(NUMBERS.md, README) - CLAUDE.md's "do not silently change a number that is
+already recorded in a document." A real letter mentions delivery/AVS/amount
+routinely, so folding confirmations into `baseline_flags` would flip it to
+`True` on nearly every clean letter, for reasons unrelated to the eval those
+numbers report. `field_confirmations`/`numeric_confirmations` are additive,
+used only by `grounding_cascade.py`.
+
+**Verified:** `tests/test_evidence_grounding_baseline.py` pins the exact
+case (`test_exact_match_prior_order_count_confirms`) plus the control
+(mismatch still contradicts) and the non-confusion case (unrelated sentence
+stays `[]`). `tests/test_evidence_grounding_cascade.py`
+(`TestConfirmedSentenceSkipsMiniCheck`) proves the cascade actually uses it:
+`NeverCallMiniCheckClient` raises if `.score()` is reached at all, and the
+"3 prior orders" sentence resolves at stage 1 without tripping it.
+
+### Other Day-2 decisions, not separately specified
+
+- **GGUF over torch/transformers, CPU over CUDA.** Disk was the binding
+  constraint (4.3-4.6GB free on `/home` throughout this session). CUDA
+  toolkit (`nvcc`) is not installed on this machine - only the driver - so a
+  CUBLAS-enabled `llama-cpp-python` build would mean installing the toolkit
+  first, which does not fit the budget for what started as a smoke test.
+  `nvhf/MiniCheck-Flan-T5-Large-Q6_K-GGUF` (644MB) via CPU-only
+  `llama-cpp-python` 0.3.35, installed into the project's existing `.venv`.
+  Measured **~240ms/sentence** on this hardware (RTX 4060 laptop, CPU path;
+  mean 238ms, median 246ms, n=6) - previously unpublished for CPU/T4 per the
+  research doc, now measured rather than assumed from the paper's A6000
+  figure.
+- **Low-level `llama_encode`/`llama_decode`, not `create_completion`.**
+  `llama-cpp-python`'s high-level API never calls `llama_encode` (checked
+  directly against the installed version's `llama.py`/`_internals.py`) - for
+  a genuine T5 encoder-decoder GGUF that means the encoder's cross-attention
+  state is never populated, so `create_completion` on this model would be
+  architecturally wrong, not just a worse API to use.
+  `disputedesk/evidence/minicheck.py::LlamaCppMiniCheckClient` drives
+  `llama_cpp._internals.LlamaContext.encode`/`.decode` directly.
+- **Threshold: 0.7, PROVISIONAL.** Bias toward withholding, per the Day-2
+  brief - chosen from the Phase 1 spread (0.82-0.88 grounded, 0.03-0.17
+  fabricated, with real margin either side of 0.7), not tuned against a
+  corpus. `MINICHECK_THRESHOLD` in `grounding_cascade.py` is flagged
+  provisional in its own docstring. Day 5 is the scheduled tuning pass.
+- **Per-sentence, not per-assertion.** MiniCheck scores sentences produced by
+  `grounding_baseline.sentences()` (the same splitter stage 1 already used
+  internally, now exposed publicly) - never the Groq gate's own
+  `AssertionVerdict.quote` extractions. This is the point of a stage 2 that
+  does not depend on a Groq call; the two gates now share no code path
+  except the letter text and the `DisputeContext` itself.
+- **Cascade not wired into `assembler.py`/`api/pipeline.py` yet.** The Day-2
+  brief says "add MiniCheck as a new path; keep the old one callable/
+  testable" and gives Phase 3's done-criterion as a script/test, not a
+  webhook integration test. Read narrowly: build and fully test the cascade
+  standalone first; a decision to make it (or not) the pipeline's default
+  gate is bigger than today's scope and risks changing live filing behavior
+  without a separate go. The new `DecisionRecord.minicheck_withheld_*`
+  columns and `record_decision()` kwargs exist and are exercised directly by
+  tests, but nothing in the production path populates them yet.
+- **Audit row: `minicheck_withheld_sentence`/`minicheck_withheld_score`**,
+  nullable, additive, outside `chain_payload()` - same pattern as the Day-1
+  token columns. Holds the single lowest-scoring sentence MiniCheck itself
+  withheld (`CascadeVerdict.minicheck_failure`), not every offending
+  sentence - the existing `failure_reason`-style truncation-to-worst-few
+  pattern already used elsewhere in this codebase, not a new tradeoff.
+- **Phase 3 verification: real fixtures, not synthetic ones.**
+  `eval/run_grounding_cascade_verification.py` reconstructs `d0000_unrec`
+  (the committed n45 corpus's Class-B item, seed 0, mutation
+  `no_prior_disputes`) via `build_corpus`, not by retyping its text - and
+  confirms the cascade withholds it, naming
+  `"This customer has never previously raised a dispute against our
+  store."` (MiniCheck score 0.018) as the offending sentence. The clean
+  fixture is hand-constructed rather than pulled from n45's `clean` class,
+  per this session's explicit instruction not to trust that label as-is
+  (see the 2026-09-03/09-04 corpus-contamination entries) - it asserts only
+  the seven `DisputeContext` fields, each an exact match, and every sentence
+  resolves at stage 1 without needing MiniCheck. Not a pytest test: it needs
+  the real 615MB model and is kept as a standalone `eval/` script, matching
+  this repo's existing split between offline `tests/` and live-resource
+  `eval/` scripts.
+
+**Status:** DECIDED.
