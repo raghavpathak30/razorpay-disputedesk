@@ -55,32 +55,6 @@ def test_first_draft_valid_records_no_repair():
     assert record.raw_responses == [_VALID_LETTER]
 
 
-def test_repair_succeeds_after_a_bad_first_draft():
-    client = FakeLLMClient(responses=["not json", _VALID_LETTER])
-
-    record = run_one_draft_attempt(0, _CONTEXT, _EVIDENCE_TYPES, _NORMALIZED, client)
-
-    assert record.first_draft_valid is False
-    assert record.first_draft_error is not None
-    assert record.repair_attempted is True
-    assert record.repair_succeeded is True
-    assert record.repair_error is None
-    assert record.final_path == "letter"
-    assert record.raw_responses == ["not json", _VALID_LETTER]
-
-
-def test_repair_also_fails_falls_back_to_template():
-    client = FakeLLMClient(responses=["not json", "still not json"])
-
-    record = run_one_draft_attempt(0, _CONTEXT, _EVIDENCE_TYPES, _NORMALIZED, client)
-
-    assert record.first_draft_valid is False
-    assert record.repair_attempted is True
-    assert record.repair_succeeded is False
-    assert record.repair_error is not None
-    assert record.final_path == "template_fallback"
-
-
 def test_too_short_letter_text_is_a_real_validation_error_not_a_parse_error():
     # Valid JSON, wrong per-field constraint (letter_text min_length=50) -
     # exercises the schema-validation branch, not just JSON parsing.

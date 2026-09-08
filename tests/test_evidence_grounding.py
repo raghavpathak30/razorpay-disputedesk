@@ -164,7 +164,7 @@ class TestOneDirectional:
 class TestFailsClosed:
     def test_a_raising_grader_withholds(self):
         class _Raising:
-            def complete(self, prompt: str) -> str:
+            def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
                 raise httpx.ReadTimeout("grader timed out")
 
         result = apply_grounding_gate(_letter(), CONTEXT, _Raising())

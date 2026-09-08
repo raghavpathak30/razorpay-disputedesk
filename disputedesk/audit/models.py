@@ -98,6 +98,18 @@ class DecisionRecord(ChainedRecord, Base):
     human_review_required: Mapped[bool] = mapped_column(nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_utc)
 
+    # CLAUDE.md Day-1 Phase 3: observability metadata about how this decision
+    # was produced, not part of the decision being audited - deliberately
+    # outside chain_payload() below, so token-accounting plumbing can never
+    # affect what the hash chain proves. Nullable: a decision that made no
+    # LLM call (ACCEPT/ESCALATE, or an unrecognised reason code) has no
+    # tokens to report, and an existing row from before this column existed
+    # reads back as NULL, not a fabricated 0 - see DECISIONS.md's 2026-09-08
+    # Phase 3 entry.
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cached_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     def chain_payload(self) -> dict:
         return {
             "dispute_id": self.dispute_id,
@@ -114,6 +126,8 @@ class DecisionRecord(ChainedRecord, Base):
             "validation_result": self.validation_result,
             "human_review_required": self.human_review_required,
             "created_at": self.created_at,
+            # prompt_tokens/completion_tokens/cached_tokens deliberately NOT
+            # here - see the column comments above.
         }
 
 

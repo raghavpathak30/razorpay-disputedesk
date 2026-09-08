@@ -45,10 +45,13 @@ def _response_with_usage(
     prompt_tokens: int = 10,
     completion_tokens: int = 5,
     reasoning_tokens: int | None = 3,
+    cached_tokens: int | None = 0,
 ) -> dict:
     usage = {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens}
     if reasoning_tokens is not None:
         usage["completion_tokens_details"] = {"reasoning_tokens": reasoning_tokens}
+    if cached_tokens is not None:
+        usage["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
     return {"choices": [{"message": {"content": content}}], "usage": usage}
 
 
@@ -111,7 +114,12 @@ def test_records_usage_including_reasoning_tokens(monkeypatch):
     client.complete("draft a letter")
 
     assert client.usage_log == [
-        {"prompt_tokens": 377, "completion_tokens": 581, "reasoning_tokens": 5}
+        {
+            "prompt_tokens": 377,
+            "completion_tokens": 581,
+            "reasoning_tokens": 5,
+            "cached_tokens": 0,
+        }
     ]
 
 
@@ -125,6 +133,59 @@ def test_records_usage_with_missing_reasoning_tokens_field_as_none(monkeypatch):
     client.complete("draft a letter")
 
     assert client.usage_log[0]["reasoning_tokens"] is None
+
+
+def test_records_usage_including_cached_tokens(monkeypatch):
+    handler = httpx.MockTransport(
+        lambda request: httpx.Response(200, json=_response_with_usage(cached_tokens=256))
+    )
+    _patch_post(monkeypatch, handler)
+    client = GroqHttpLLMClient()
+
+    client.complete("draft a letter")
+
+    assert client.usage_log[0]["cached_tokens"] == 256
+
+
+def test_records_usage_with_missing_cached_tokens_field_as_zero_not_none(monkeypatch):
+    """CLAUDE.md Day-1 Phase 3: unlike `reasoning_tokens`, an absent or null
+    `cached_tokens` is stored as 0, never `None` - this field gets summed
+    into an audit row's side column, and a stray `None` would break that."""
+    handler = httpx.MockTransport(
+        lambda request: httpx.Response(200, json=_response_with_usage(cached_tokens=None))
+    )
+    _patch_post(monkeypatch, handler)
+    client = GroqHttpLLMClient()
+
+    client.complete("draft a letter")
+
+    assert client.usage_log[0]["cached_tokens"] == 0
+
+
+def test_records_usage_with_cached_tokens_explicitly_null_as_zero(monkeypatch):
+    """The "null", not just "absent", half of the same requirement -
+    `prompt_tokens_details.cached_tokens: null` (an explicit key with a null
+    value, as Groq's real API can send on a cache miss) must also read back
+    as 0, not `None`."""
+    handler = httpx.MockTransport(
+        lambda request: httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": "hello"}}],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "prompt_tokens_details": {"cached_tokens": None},
+                },
+            },
+        )
+    )
+    _patch_post(monkeypatch, handler)
+    client = GroqHttpLLMClient()
+
+    client.complete("draft a letter")
+
+    assert client.usage_log[0]["cached_tokens"] == 0
 
 
 def test_usage_log_accumulates_across_multiple_calls(monkeypatch):
@@ -149,5 +210,10 @@ def test_missing_usage_field_entirely_does_not_crash(monkeypatch):
 
     assert result == "x"
     assert client.usage_log == [
-        {"prompt_tokens": None, "completion_tokens": None, "reasoning_tokens": None}
+        {
+            "prompt_tokens": None,
+            "completion_tokens": None,
+            "reasoning_tokens": None,
+            "cached_tokens": 0,
+        }
     ]

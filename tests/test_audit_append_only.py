@@ -25,10 +25,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DatabaseError
 
-from disputedesk.audit.chain import verify_chain
+from disputedesk.audit.chain import compute_row_hash, verify_chain
 from disputedesk.audit.db import get_engine, init_db, make_session_factory
 from disputedesk.audit.log import record_api_outcome, record_decision
-from disputedesk.audit.models import ApiOutcome, DecisionRecord
+from disputedesk.audit.models import ApiOutcome, DecisionRecord, now_utc
 
 
 @pytest.fixture
@@ -255,3 +255,85 @@ def test_the_chain_covers_the_features_json_a_reviewer_would_check(session, engi
     session.expire_all()
 
     assert verify_chain(session).ok is False
+
+
+# --------------------------------------------------------------------------
+# 3. Token-usage side columns (CLAUDE.md Day-1 Phase 3) are observability
+#    metadata, not decision content - they must never affect the hash chain.
+# --------------------------------------------------------------------------
+
+
+def _make_decision_record(**overrides) -> DecisionRecord:
+    """Constructs a `DecisionRecord` directly, with no session/insert - for
+    proving something about `chain_payload()` itself, in isolation from
+    `record_decision`'s idempotency/chain-linking mechanics."""
+    fields = dict(
+        dispute_id="disp_x",
+        reason_code="MC_4837",
+        amount_inr=5000.0,
+        model_version="lgbm-config-v1-seed42",
+        features_json=json.dumps({"amount": 5000.0, "avs_match": True}, sort_keys=True),
+        p_win=0.8,
+        policy_branch="contest",
+        expected_value_inr=3600.0,
+        representment_cost_inr=400.0,
+        low_confidence=False,
+        prompt_version="normalize_comms_log_v1,explanation_letter_v4",
+        validation_result="validated",
+        human_review_required=False,
+        created_at=now_utc(),
+    )
+    fields.update(overrides)
+    return DecisionRecord(**fields)
+
+
+def test_token_usage_columns_are_absent_from_the_hashed_payload():
+    row = _make_decision_record(prompt_tokens=500, completion_tokens=200, cached_tokens=100)
+
+    payload = row.chain_payload()
+
+    assert "prompt_tokens" not in payload
+    assert "completion_tokens" not in payload
+    assert "cached_tokens" not in payload
+
+
+def test_token_usage_values_do_not_change_the_row_hash():
+    """Two rows, identical in every business field, differing only in their
+    token-usage side columns, must hash identically - proof that
+    `chain_payload()` (and therefore `compute_row_hash`) never sees them."""
+    created_at = now_utc()
+    row_without_tokens = _make_decision_record(
+        created_at=created_at, prompt_tokens=None, completion_tokens=None, cached_tokens=None
+    )
+    row_with_tokens = _make_decision_record(
+        created_at=created_at, prompt_tokens=999, completion_tokens=888, cached_tokens=777
+    )
+
+    assert row_without_tokens.chain_payload() == row_with_tokens.chain_payload()
+    assert compute_row_hash(None, row_without_tokens.chain_payload()) == compute_row_hash(
+        None, row_with_tokens.chain_payload()
+    )
+
+
+def test_chain_verifies_across_rows_with_and_without_token_usage(session):
+    """A row written before this column existed (no token kwargs passed, so
+    they default to `None`) and a row written after (real token counts) must
+    coexist in the same chain and both verify - side columns need no schema
+    version, no backfill, and no re-hashing of old rows."""
+    record_decision(session, **_decision_kwargs("disp_old"))  # simulates a pre-Phase-3 row
+    record_decision(
+        session,
+        **_decision_kwargs("disp_new", prompt_tokens=500, completion_tokens=200, cached_tokens=100),
+    )
+
+    result = verify_chain(session)
+
+    assert result.ok is True
+    assert result.problems == []
+    assert result.rows_checked == 2
+
+    old_row, new_row = session.query(DecisionRecord).order_by(DecisionRecord.id).all()
+    assert old_row.prompt_tokens is None
+    assert new_row.prompt_tokens == 500
+    assert new_row.completion_tokens == 200
+    assert new_row.cached_tokens == 100

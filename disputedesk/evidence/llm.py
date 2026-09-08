@@ -18,10 +18,26 @@ logger = logging.getLogger(__name__)
 
 
 class LLMClient(Protocol):
-    def complete(self, prompt: str) -> str:
+    usage_log: list[dict]
+    """Every `complete()` call this instance has made, in order, as
+    `{"prompt_tokens", "completion_tokens", "reasoning_tokens", "cached_tokens"}`
+    dicts (CLAUDE.md Day-1 Phase 3). `FakeLLMClient` never touches the
+    network, so its entries are all zero; `GroqHttpLLMClient`'s are the
+    provider's real reported usage. Callers that persist per-dispute token
+    totals (`disputedesk/api/pipeline.py`) sum this list rather than reaching
+    into a concrete client type, so the aggregation works against either."""
+
+    def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
         """Return the model's raw text completion for `prompt`. Callers are
         responsible for parsing/validating the result - this interface makes
         no promise about output shape.
+
+        `response_format` (default `None`) is passed to the provider
+        verbatim when given - e.g. Groq/OpenAI-style structured-outputs
+        `{"type": "json_schema", "json_schema": {...}}` (CLAUDE.md Day-1
+        Phase 2). `None` means "no constraint beyond the prompt", which is
+        every call site's behaviour before Phase 2 and still is for every
+        call site except the drafting call.
         """
         ...
 
@@ -39,10 +55,18 @@ class FakeLLMClient:
             raise ValueError("FakeLLMClient needs at least one response")
         self._responses = responses
         self._call_count = 0
+        # Zero-valued, not omitted: keeps this attribute's shape identical to
+        # `GroqHttpLLMClient.usage_log` (CLAUDE.md Day-1 Phase 3) so callers
+        # that sum it (`disputedesk/api/pipeline.py`) work against either
+        # client without a type check.
+        self.usage_log: list[dict] = []
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
         index = min(self._call_count, len(self._responses) - 1)
         self._call_count += 1
+        self.usage_log.append(
+            {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0, "cached_tokens": 0}
+        )
         return self._responses[index]
 
     @property
@@ -134,7 +158,19 @@ class GroqHttpLLMClient:
         # in addition to the `logger.info` line below.
         self.usage_log: list[dict] = []
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
+        body = {
+            "model": self._model,
+            "max_completion_tokens": self.MAX_COMPLETION_TOKENS,
+            "reasoning_effort": self._reasoning_effort,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if response_format is not None:
+            # Omitted entirely rather than sent as `null` when unset, so the
+            # request body every existing call site sends is byte-identical
+            # to before this parameter existed (`tests/test_evidence_llm_groq.py`).
+            body["response_format"] = response_format
+
         def _call() -> httpx.Response:
             response = httpx.post(
                 self._api_url,
@@ -142,12 +178,7 @@ class GroqHttpLLMClient:
                     "Authorization": f"Bearer {self._api_key}",
                     "content-type": "application/json",
                 },
-                json={
-                    "model": self._model,
-                    "max_completion_tokens": self.MAX_COMPLETION_TOKENS,
-                    "reasoning_effort": self._reasoning_effort,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
+                json=body,
                 timeout=self._timeout_seconds,
             )
             response.raise_for_status()
@@ -160,19 +191,30 @@ class GroqHttpLLMClient:
 
     def _record_usage(self, usage: dict) -> None:
         reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+        # `cached_tokens` (CLAUDE.md Day-1 Phase 3) is stored as 0, never
+        # `None`, whether the field is absent entirely or explicitly `null` -
+        # both mean "this call had no cache hit", and the audit row's
+        # `cached_tokens` side column (`disputedesk/audit/models.py`) is meant
+        # to be summed across a dispute's calls, which a stray `None` would
+        # break. Contrast with `reasoning_tokens` above, which stays `None`
+        # on absence - that field is diagnostic-only, never summed or
+        # persisted to the audit row, so there is no such requirement on it.
+        cached_tokens = (usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0
         record = {
             "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": usage.get("completion_tokens"),
             "reasoning_tokens": reasoning_tokens,
+            "cached_tokens": cached_tokens,
         }
         self.usage_log.append(record)
         logger.info(
             "groq usage model=%s reasoning_effort=%s prompt_tokens=%s "
-            "completion_tokens=%s reasoning_tokens=%s (ceiling=%s)",
+            "completion_tokens=%s reasoning_tokens=%s cached_tokens=%s (ceiling=%s)",
             self._model,
             self._reasoning_effort,
             record["prompt_tokens"],
             record["completion_tokens"],
             record["reasoning_tokens"],
+            record["cached_tokens"],
             self.MAX_COMPLETION_TOKENS,
         )

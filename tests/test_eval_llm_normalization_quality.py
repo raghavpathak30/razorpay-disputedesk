@@ -42,7 +42,7 @@ class _FlakyThenValidLLMClient:
         self._responses = responses
         self.call_count = 0
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
         self.call_count += 1
         if self.call_count <= self._fail_times:
             raise _rate_limit_error()

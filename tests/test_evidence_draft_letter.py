@@ -10,7 +10,7 @@ themselves are pinned in `tests/test_evidence_letter_provenance.py`.
 import json
 
 from disputedesk.evidence.context import DisputeContext
-from disputedesk.evidence.draft_letter import draft_explanation_letter
+from disputedesk.evidence.draft_letter import _STATIC_PREFIX, draft_explanation_letter
 from disputedesk.evidence.letter import LetterProvenance
 from disputedesk.evidence.llm import FakeLLMClient
 from disputedesk.evidence.schemas import NormalizedCommunicationLog
@@ -50,12 +50,17 @@ def test_valid_llm_response_is_used_directly():
     assert letter.letter_text == "x" * 80
 
 
-def test_repair_succeeds_after_one_bad_response():
+def test_malformed_first_response_skips_repair_and_falls_back_immediately():
+    """CLAUDE.md Day-1 Phase 2: the drafting call constrains output at the
+    sampling layer via response_format, so a malformed response here is no
+    longer treated as recoverable - repair=False means one bad response
+    costs exactly one call and goes straight to the deterministic template,
+    never a second (repair) call."""
     client = FakeLLMClient(responses=["not json", VALID_LETTER_RESPONSE])
     letter = draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
 
-    assert letter.provenance is LetterProvenance.MODEL
-    assert client.call_count == 2
+    assert letter.provenance is LetterProvenance.FALLBACK
+    assert client.call_count == 1  # no repair call spent
 
 
 def test_falls_back_to_deterministic_template_after_two_bad_responses():
@@ -95,7 +100,7 @@ class _RecordingLLMClient:
         self._responses = responses
         self.prompts: list[str] = []
 
-    def complete(self, prompt: str) -> str:
+    def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
         self.prompts.append(prompt)
         index = min(len(self.prompts) - 1, len(self._responses) - 1)
         return self._responses[index]
@@ -162,3 +167,43 @@ class TestPromptOnlyOffersAvailableEvidence:
         submitted_block, missing_block = self._submitted_and_missing_blocks(client.prompts[0])
         assert "billing_proof" in submitted_block
         assert missing_block.splitlines()[0].strip().endswith("none")
+
+
+class TestStaticPrefixIsByteIdenticalAcrossDisputes:
+    """CLAUDE.md Day-1 Phase 1: Groq's prompt caching is exact-prefix - a
+    single changed byte early in the prompt is a full cache miss. This pins
+    that every prompt this module builds actually starts with the same
+    `_STATIC_PREFIX` object, regardless of which dispute is being drafted -
+    the property `draft_letter.py`'s reordering exists to guarantee."""
+
+    OTHER_CONTEXT = DisputeContext(
+        reason_code="AMEX_FR2",
+        amount=123.45,
+        avs_match=False,
+        cvv_match=True,
+        device_fingerprint_known=False,
+        delivery_confirmed=True,
+        prior_order_count=3,
+    )
+    OTHER_COMMS = NormalizedCommunicationLog(
+        claims_unauthorized_transaction=False,
+        mentions_prior_bank_contact=True,
+        mentions_shared_card_access=True,
+        mentions_travel=True,
+        tone="terse",
+        is_substantive=True,
+        summary="Customer mentions travel and shared card access.",
+    )
+
+    def test_two_prompt_builds_for_different_disputes_share_a_byte_identical_prefix(self):
+        client = _RecordingLLMClient(responses=[VALID_LETTER_RESPONSE, VALID_LETTER_RESPONSE])
+        draft_explanation_letter(CONTEXT, EVIDENCE_TYPES, NORMALIZED_COMMS, client)
+        draft_explanation_letter(self.OTHER_CONTEXT, EVIDENCE_TYPES, self.OTHER_COMMS, client)
+
+        first_prompt, second_prompt = client.prompts
+        assert first_prompt.startswith(_STATIC_PREFIX)
+        assert second_prompt.startswith(_STATIC_PREFIX)
+        assert first_prompt[: len(_STATIC_PREFIX)] == second_prompt[: len(_STATIC_PREFIX)]
+        # And the two disputes actually differ past that boundary - otherwise
+        # this test would pass by accident (e.g. both prompts identical).
+        assert first_prompt != second_prompt

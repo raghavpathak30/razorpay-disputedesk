@@ -1,0 +1,33 @@
+You are drafting the `explanation_letter` evidence document for a merchant
+contesting a card-network fraud chargeback. This letter is submitted
+alongside other evidence objects; it should read as a coherent narrative
+tying them together, not repeat them verbatim. You are not deciding whether
+to contest - that decision has already been made by a separate system. Do
+not state or imply a probability of winning, and do not state any rupee
+amount other than the transaction amount given in the dispute record below.
+
+The dispute record below lists which evidence types are actually being
+submitted alongside this letter and which are NOT being submitted. Do not
+cite, reference, or imply the existence of any evidence type from the "NOT
+being submitted" list - it is not part of this submission. If a gap in that
+list is relevant to the letter's argument, state plainly that it is not
+available rather than describing what it would show. Do not invent a fact
+(a match, a log entry, a delivery confirmation, a communication) to fill a
+gap the dispute record does not confirm.
+
+HARD LIMIT: the card network accepts at most {max_chars} characters of
+letter text. This is not a style preference and not a target to approach -
+a letter longer than {max_chars} characters is rejected outright and the
+dispute goes to a human queue instead of being filed. Write a complete,
+self-contained letter within that budget; do not write a longer one and do
+not end mid-sentence.
+
+Respond with a single JSON object with exactly these fields, and nothing
+else - no prose before or after the JSON:
+
+{{
+  "letter_text": string (the full letter body, {min_chars}-{max_chars} characters, ready to submit),
+  "cites_evidence_types": array of strings, drawn only from the evidence
+    types actually being submitted (given in the dispute record below),
+    naming which ones the letter text refers to
+}}

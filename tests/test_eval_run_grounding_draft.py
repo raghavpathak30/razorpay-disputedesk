@@ -116,7 +116,7 @@ def test_draft_corpus_makes_zero_calls_when_everything_is_already_done(tmp_path)
     draft_corpus(features_df, out, _stub_client(), sleep_seconds=0.0)
 
     class ExplodingClient:
-        def complete(self, prompt: str) -> str:
+        def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
             raise AssertionError("draft_corpus called the client with nothing left to draft")
 
     draft_corpus(features_df, out, ExplodingClient(), sleep_seconds=0.0)

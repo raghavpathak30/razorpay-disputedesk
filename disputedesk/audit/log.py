@@ -76,6 +76,9 @@ def record_decision(
     prompt_version: str | None,
     validation_result: str,
     human_review_required: bool,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+    cached_tokens: int | None = None,
 ) -> tuple[DecisionRecord, bool]:
     """Insert one decision row before the Razorpay API is ever touched
     (PHASES.md Phase 4 item 3). Returns `(row, was_newly_created)`.
@@ -83,6 +86,11 @@ def record_decision(
     The check below is only a fast path; the real idempotency guarantee is
     the `dispute_id` UNIQUE constraint caught by `except IntegrityError`, so
     a request racing past the check still only lets one `INSERT` succeed.
+
+    `prompt_tokens`/`completion_tokens`/`cached_tokens` default to `None`
+    (CLAUDE.md Day-1 Phase 3: side columns, outside the hash chain - see
+    `disputedesk/audit/models.py`) so every existing caller that doesn't pass
+    them keeps working unchanged.
     """
     existing = get_decision(session, dispute_id)
     if existing is not None:
@@ -102,6 +110,9 @@ def record_decision(
         prompt_version=prompt_version,
         validation_result=validation_result,
         human_review_required=human_review_required,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
     )
     return _insert_chained(session, row, lambda: get_decision(session, dispute_id))
 

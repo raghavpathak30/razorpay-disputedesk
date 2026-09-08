@@ -1,0 +1,16 @@
+Dispute context:
+- Reason code: {reason_code}
+- Transaction amount: INR {amount}
+- AVS match: {avs_match}
+- CVV match: {cvv_match}
+- Device recognized from prior activity: {device_fingerprint_known}
+- Delivery/fulfillment confirmed: {delivery_confirmed}
+- Prior orders from this customer: {prior_order_count}
+
+Evidence types actually being submitted alongside this letter, for THIS
+dispute: {evidence_types}
+
+Evidence types NOT being submitted for this dispute: {missing_evidence_types}
+
+Customer's own message, summarised: {comms_summary}
+Customer message tone: {comms_tone}

@@ -29,8 +29,19 @@ from disputedesk.evidence.reason_code_map import available_evidence_types
 from disputedesk.evidence.schemas import ExplanationLetterOutput, NormalizedCommunicationLog
 from disputedesk.evidence.validated_call import call_llm_and_validate
 
-PROMPT_VERSION = "explanation_letter_v3"
-"""v3 (2026-09-04) tells the model only the evidence types THIS dispute's own
+PROMPT_VERSION = "explanation_letter_v4"
+"""v4 (2026-09-07) is a byte-ordering change only, not a content/meaning
+change: split into `explanation_letter_v4_static.txt` (role, invention/
+citation rules, hard limit, JSON schema - zero per-dispute variance) and
+`explanation_letter_v4_dynamic.txt` (dispute record, evidence lists, comms
+fields - always last), so Groq's exact-prefix prompt caching can hit on the
+static portion across every call regardless of which dispute is being
+drafted. See `_STATIC_PREFIX` below. Versioned as a new file rather than an
+edit in place, per `disputedesk/evidence/prompts.py`, even though nothing the
+model is told has changed - old audit rows' `prompt_version` must keep
+pointing at the exact bytes they actually ran with.
+
+v3 (2026-09-04) tells the model only the evidence types THIS dispute's own
 facts actually back up (`reason_code_map.available_evidence_types`), lists the
 rest as explicitly NOT being submitted, and instructs the model to state that
 gap rather than invent supporting narrative for it. v2 passed the reason
@@ -40,8 +51,48 @@ fabricated claims (a delivery confirmation, an access-log match) the
 grounding gate then had to withhold - see DECISIONS.md's 2026-09-04
 remediation entry. v2 (2026-09-02) states the card network's character limit
 in the prompt itself; v1 quoted a 4,000-character budget the wire format
-could not carry. Kept as a new versioned file rather than an edit in place,
-per `disputedesk/evidence/prompts.py`."""
+could not carry."""
+
+_STATIC_PREFIX = load_prompt(f"{PROMPT_VERSION}_static").format(
+    min_chars=LETTER_MIN_CHARS, max_chars=NETWORK_SUMMARY_MAX_CHARS
+)
+"""Computed once at import time, so every call in this process shares the
+exact same object - the module-level constant Groq's exact-prefix caching
+needs (CLAUDE.md Day-1 Phase 1: "one changed byte early in the prompt is a
+full miss"). `min_chars`/`max_chars` are baked in here rather than left as
+per-call `.format()` slots because, while they are technically read from
+`disputedesk.evidence.letter`, their *values* never vary across calls - so
+formatting them once at import keeps this prefix provably byte-identical
+without duplicating the two constants as literals in the prompt file
+(`disputedesk/evidence/letter.py`'s own docstring is why that single-source
+rule exists). `tests/test_evidence_draft_letter.py`'s
+`test_two_prompt_builds_for_different_disputes_share_a_byte_identical_prefix`
+pins this."""
+
+_RESPONSE_FORMAT = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "explanation_letter_output",
+        "schema": ExplanationLetterOutput.model_json_schema(),
+        "strict": True,
+    },
+}
+"""CLAUDE.md Day-1 Phase 2: constrains the drafting call's output at the
+sampling layer via Groq's structured outputs, so a malformed/non-schema
+response is no longer a failure mode this call needs a repair retry for.
+Derived from `ExplanationLetterOutput.model_json_schema()` directly, once at
+import time - no second, hand-written source of truth for the letter's shape.
+`ExplanationLetterOutput`'s `extra="forbid"` is what makes this schema valid
+for Groq's `strict: true` mode (which requires `additionalProperties: false`
+at every object level); nothing here re-derives or overrides that.
+
+Verified live against `openai/gpt-oss-20b` before this constant was written
+(this session's throwaway, uncommitted smoke script): HTTP 200, schema
+accepted, `finish_reason: "stop"`, output parsed and validated against
+`ExplanationLetterOutput` with zero repairs. Only this call passes
+`response_format`/`repair=False` to `call_llm_and_validate` -
+`normalize_comms.py` and `grounding.py` are unaffected, by construction: they
+never pass either argument."""
 
 
 def _deterministic_fallback(
@@ -80,7 +131,7 @@ def draft_explanation_letter(
 ) -> DraftedLetter:
     available = available_evidence_types(context, evidence_types)
     missing = tuple(t for t in evidence_types if t not in available)
-    prompt = load_prompt(PROMPT_VERSION).format(
+    dynamic_record = load_prompt(f"{PROMPT_VERSION}_dynamic").format(
         reason_code=context.reason_code,
         amount=f"{context.amount:.2f}",
         avs_match=context.avs_match,
@@ -92,10 +143,14 @@ def draft_explanation_letter(
         missing_evidence_types=", ".join(missing) if missing else "none",
         comms_summary=normalized_comms.summary,
         comms_tone=normalized_comms.tone,
-        min_chars=LETTER_MIN_CHARS,
-        max_chars=NETWORK_SUMMARY_MAX_CHARS,
     )
-    parsed = call_llm_and_validate(llm_client, prompt, ExplanationLetterOutput)
+    # `_STATIC_PREFIX` first, dynamic dispute record last (CLAUDE.md Day-1
+    # Phase 1) - every byte before this concatenation point is identical
+    # across every call this process makes, regardless of dispute.
+    prompt = _STATIC_PREFIX + "\n\n" + dynamic_record
+    parsed = call_llm_and_validate(
+        llm_client, prompt, ExplanationLetterOutput, response_format=_RESPONSE_FORMAT, repair=False
+    )
     if parsed is not None:
         # The only construction site of a submittable letter in this codebase.
         # `parsed` is the model's own output, already validated against

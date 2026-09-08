@@ -36,7 +36,12 @@ def _parse(text: str, schema: type[BaseModel]) -> BaseModel:
 
 
 def validate_or_repair(
-    llm_client: LLMClient, prompt: str, raw_response: str, schema: type[BaseModel]
+    llm_client: LLMClient,
+    prompt: str,
+    raw_response: str,
+    schema: type[BaseModel],
+    *,
+    repair: bool = True,
 ) -> BaseModel | None:
     """Validate `raw_response` - a completion already obtained for `prompt` -
     against `schema`. Makes **no** call to `llm_client` if `raw_response`
@@ -46,6 +51,17 @@ def validate_or_repair(
     template fallback and setting a human-review flag (SPEC.md §7: "the
     system degrades, it does not crash").
 
+    `repair` (default `True`, today's only behaviour) governs only what
+    happens on a *validation failure*: when `False`, a malformed/invalid
+    first response returns `None` immediately - same return value and same
+    caller-side fallback as a failed repair attempt, just without spending a
+    second call to get there. Used by `draft_letter.py` (CLAUDE.md Day-1
+    Phase 2) once the drafting call constrains output at the sampling layer
+    via `response_format`, making a "the model returned malformed JSON, ask
+    it again" retry redundant for that call specifically -
+    `normalize_comms.py` and `grounding.py` keep the default and are
+    unaffected (`tests/test_evidence_validated_call.py` pins this).
+
     Split out from `call_llm_and_validate` so a caller that already has a
     completion (e.g. one it fetched for logging, or a connectivity check)
     can validate it without a second, redundant API call for the same
@@ -54,6 +70,8 @@ def validate_or_repair(
     try:
         return _parse(raw_response, schema)
     except (json.JSONDecodeError, ValidationError) as first_error:
+        if not repair:
+            return None
         repair_prompt = (
             prompt + "\n\n" + load_prompt("repair_addendum_v1").format(error=str(first_error))
         )
@@ -65,11 +83,19 @@ def validate_or_repair(
 
 
 def call_llm_and_validate(
-    llm_client: LLMClient, prompt: str, schema: type[BaseModel]
+    llm_client: LLMClient,
+    prompt: str,
+    schema: type[BaseModel],
+    *,
+    response_format: dict | None = None,
+    repair: bool = True,
 ) -> BaseModel | None:
     """Call `llm_client` with `prompt` exactly once, then validate the result
     via `validate_or_repair` (which makes a second call only on failure, as
-    the one repair attempt).
+    the one repair attempt, and only when `repair` is `True`).
+
+    `response_format` (default `None`, today's only behaviour) is passed to
+    `llm_client.complete` verbatim - see `LLMClient.complete`'s docstring.
     """
-    raw = llm_client.complete(prompt)
-    return validate_or_repair(llm_client, prompt, raw, schema)
+    raw = llm_client.complete(prompt, response_format=response_format)
+    return validate_or_repair(llm_client, prompt, raw, schema, repair=repair)

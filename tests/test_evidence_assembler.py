@@ -68,13 +68,14 @@ def test_packet_is_not_flagged_for_human_review_when_both_llm_calls_succeed():
 
 def test_packet_is_flagged_for_human_review_when_normalization_falls_back():
     # Normalization gets two bad responses (fallback); letter drafting then
-    # gets one bad, one good (repair succeeds) - the packet-level flag must
+    # succeeds on its one shot (CLAUDE.md Day-1 Phase 2: the drafting call
+    # runs with repair=False, schema-enforced instead - there is no second,
+    # repair response to queue here anymore) - the packet-level flag must
     # still be True because *one* of the two LLM jobs degraded.
     client = FakeLLMClient(
         responses=[
             "broken",
             "still broken",
-            "not json",
             VALID_LETTER_RESPONSE,
             VALID_GROUNDING_RESPONSE,
         ]

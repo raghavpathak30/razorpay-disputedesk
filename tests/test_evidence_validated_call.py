@@ -65,3 +65,69 @@ def test_markdown_code_fence_is_stripped_before_parsing():
     result = call_llm_and_validate(client, "prompt", _ToySchema)
     assert result == _ToySchema(value=5)
     assert client.call_count == 1
+
+
+# --------------------------------------------------------------------------
+# CLAUDE.md Day-1 Phase 2: `response_format`/`repair` were added to this
+# module's shared signature so `draft_letter.py` can opt into structured
+# decoding without disturbing `normalize_comms.py`/`grounding.py`, which call
+# with neither argument. The tests above already pin the default-args
+# behaviour on the exact same assertions that predate this change; this one
+# makes the "still genuinely the repair path, not something new" claim
+# explicit, and the two below cover the new `repair=False` behaviour.
+# --------------------------------------------------------------------------
+
+
+def test_default_args_still_trigger_the_repair_path_on_a_malformed_response():
+    """Calling with no `response_format`/`repair` override - exactly how
+    `normalize_comms.py` and `grounding.py` call this function - must still
+    make the one repair call on a malformed first response, proving the old
+    behaviour survived the signature change intact rather than merely
+    happening to pass the same assertions."""
+    client = FakeLLMClient(responses=["not json", json.dumps({"value": 9})])
+    result = call_llm_and_validate(client, "prompt", _ToySchema)
+    assert result == _ToySchema(value=9)
+    assert client.call_count == 2
+
+
+def test_repair_false_returns_none_immediately_on_a_malformed_response():
+    client = FakeLLMClient(responses=["not json", json.dumps({"value": 9})])
+    result = call_llm_and_validate(client, "prompt", _ToySchema, repair=False)
+    assert result is None
+    assert client.call_count == 1  # no repair call spent
+
+
+def test_repair_false_does_not_affect_a_response_that_validates_first_try():
+    client = FakeLLMClient(responses=[json.dumps({"value": 4})])
+    result = call_llm_and_validate(client, "prompt", _ToySchema, repair=False)
+    assert result == _ToySchema(value=4)
+    assert client.call_count == 1
+
+
+def test_response_format_is_forwarded_to_the_llm_client_verbatim():
+    class _RecordingClient:
+        def __init__(self):
+            self.seen_response_format = "not called"
+
+        def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
+            self.seen_response_format = response_format
+            return json.dumps({"value": 1})
+
+    client = _RecordingClient()
+    schema = {"type": "json_schema", "json_schema": {"name": "toy"}}
+    call_llm_and_validate(client, "prompt", _ToySchema, response_format=schema)
+    assert client.seen_response_format == schema
+
+
+def test_response_format_defaults_to_none():
+    class _RecordingClient:
+        def __init__(self):
+            self.seen_response_format = "not called"
+
+        def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
+            self.seen_response_format = response_format
+            return json.dumps({"value": 1})
+
+    client = _RecordingClient()
+    call_llm_and_validate(client, "prompt", _ToySchema)
+    assert client.seen_response_format is None

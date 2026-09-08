@@ -113,6 +113,14 @@ class _EvidenceOutcome:
     # client - the same fail-closed shape the letter provenance check
     # already has.
     evidence_bundle: tuple[EvidenceDocument, ...] | None
+    # CLAUDE.md Day-1 Phase 3: summed across every LLM call made while
+    # assembling this dispute's evidence (normalize, draft, grounding alike).
+    # `None` when no LLM call was made at all - not 0, which would falsely
+    # claim a call happened and used none - see `_NO_EVIDENCE`/
+    # `_UNRECOGNISED_REASON_CODE` below.
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    cached_tokens: int | None
 
 
 _NO_EVIDENCE = _EvidenceOutcome(
@@ -121,6 +129,9 @@ _NO_EVIDENCE = _EvidenceOutcome(
     human_review_required=False,
     letter=None,
     evidence_bundle=None,
+    prompt_tokens=None,
+    completion_tokens=None,
+    cached_tokens=None,
 )
 
 # The documented fallback for a reason code this system has no evidence
@@ -133,7 +144,29 @@ _UNRECOGNISED_REASON_CODE = _EvidenceOutcome(
     human_review_required=True,
     letter=None,
     evidence_bundle=None,
+    prompt_tokens=None,
+    completion_tokens=None,
+    cached_tokens=None,
 )
+
+
+def _summed_token_usage(llm_client: LLMClient) -> tuple[int, int, int]:
+    """`(prompt_tokens, completion_tokens, cached_tokens)` summed across
+    every call `llm_client` made while assembling one dispute's evidence -
+    normalize, draft, and grounding alike (CLAUDE.md Day-1 Phase 3).
+
+    Safe to call unconditionally: `llm_client` is fresh per request
+    (`disputedesk/api/webhook.py`'s `get_llm_client` FastAPI dependency has
+    no `use_cache` sharing across requests), so `usage_log` at this point
+    contains exactly this dispute's calls and nothing else's. A missing or
+    `None` value inside any single call's usage dict is treated as 0, not
+    skipped or propagated as `None` - see `GroqHttpLLMClient._record_usage`'s
+    own comment on why `cached_tokens` in particular is never `None`.
+    """
+    prompt_tokens = sum(u.get("prompt_tokens") or 0 for u in llm_client.usage_log)
+    completion_tokens = sum(u.get("completion_tokens") or 0 for u in llm_client.usage_log)
+    cached_tokens = sum(u.get("cached_tokens") or 0 for u in llm_client.usage_log)
+    return prompt_tokens, completion_tokens, cached_tokens
 
 
 def _validation_result_for(packet) -> str:
@@ -167,12 +200,16 @@ def _assemble_evidence_if_contesting(
 
     context = _context_from_entity(entity)
     packet = assemble_evidence_packet(context, entity.customer_communication_log, llm_client)
+    prompt_tokens, completion_tokens, cached_tokens = _summed_token_usage(llm_client)
     return _EvidenceOutcome(
         prompt_version=_PROMPT_VERSIONS_FOR_CONTEST,
         validation_result=_validation_result_for(packet),
         human_review_required=packet.human_review_required,
         letter=packet.explanation_letter,
         evidence_bundle=packet.evidence_bundle,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
     )
 
 
@@ -200,6 +237,9 @@ def _persist_decision(
         prompt_version=evidence.prompt_version,
         validation_result=evidence.validation_result,
         human_review_required=evidence.human_review_required,
+        prompt_tokens=evidence.prompt_tokens,
+        completion_tokens=evidence.completion_tokens,
+        cached_tokens=evidence.cached_tokens,
     )
 
 

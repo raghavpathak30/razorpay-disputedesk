@@ -4,6 +4,19 @@ first attempt, needs the one repair call, and - if repair also fails -
 falls back to the deterministic template. Sampled empirically against a
 fixed dispute context, not scripted.
 
+**As of `PROMPT_VERSION == "explanation_letter_v4"` (CLAUDE.md Day-1 Phase
+2), the drafting call runs with `repair=False`** - output is constrained at
+the sampling layer via Groq structured outputs (`response_format`) instead
+of a JSON-repair retry, so a malformed/invalid first response now goes
+straight to the deterministic template. `DraftAttemptRecord.repair_attempted`
+will therefore always read `False`, `repair_succeeded`/`repair_error` always
+`None`, for every run against v4 and later - this is expected, not a bug in
+this module. The three fields are kept rather than removed so a `v3` (or
+earlier) run's recorded reliability numbers can still be read side by side
+with a `v4` run's - see DECISIONS.md's 2026-09-08 entry ("Constrained
+decoding replaces repair-retry for the drafting call") for why the retry was
+removed and why these fields were kept anyway.
+
 Uses `draft_explanation_letter` directly, not the full
 `assemble_evidence_packet` - and a single fixed `NormalizedCommunicationLog`
 (obtained once per dispute by the caller, reused across every
@@ -59,8 +72,8 @@ class _RecordingLLMClient:
         self._inner = inner
         self.responses: list[str] = []
 
-    def complete(self, prompt: str) -> str:
-        response = self._inner.complete(prompt)
+    def complete(self, prompt: str, *, response_format: dict | None = None) -> str:
+        response = self._inner.complete(prompt, response_format=response_format)
         self.responses.append(response)
         return response
 
