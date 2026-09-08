@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     llm_api_url: str
     llm_model: str
     database_url: str
+    # CLAUDE.md Day-2 grounding-gate cascade: path to the MiniCheck GGUF file
+    # (`disputedesk/evidence/minicheck.py`). Optional and unset by default -
+    # unlike the LLM/Razorpay settings above, nothing in the production
+    # pipeline calls MiniCheck yet (it is a new, independently-testable path,
+    # not a default one), so requiring this would break every existing
+    # deployment's config for a stage nothing calls.
+    minicheck_model_path: str | None = None
 
 
 @lru_cache
